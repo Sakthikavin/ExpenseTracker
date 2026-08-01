@@ -1,15 +1,59 @@
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+# --- Gradle ---
+.gradle/
+build/
+*/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# --- Android build output ---
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+bin/
+gen/
+out/
+release/
+captures/
+
+# --- Local config (machine-specific, never commit) ---
 local.properties
+
+# --- Signing keys (NEVER commit) ---
+*.jks
+*.keystore
+keystore.properties
+
+# --- IntelliJ / Android Studio ---
+.idea/
+*.iml
+*.iws
+*.ipr
+.navigation/
+
+# --- Native builds ---
+.externalNativeBuild/
+.cxx/
+
+# --- Kotlin ---
+.kotlin/
+
+# --- Logs and profiling ---
+*.log
+*.hprof
+
+# --- macOS ---
+.DS_Store
+
+# --- Misc ---
+freeline.py
+freeline/
+freeline_project_description.json
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+lint/intermediates/
+lint/generated/
+lint/outputs/
+lint/tmp/
