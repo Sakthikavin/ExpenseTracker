@@ -1,47 +1,47 @@
 package com.example.expensetracker
 
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import com.example.expensetracker.ui.common.LocalAppContainer
+import com.example.expensetracker.ui.navigation.ExpenseTrackerNavGraph
 import com.example.expensetracker.ui.theme.ExpenseTrackerTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        val container = (application as ExpenseTrackerApp).container
+
         setContent {
+            val permissionLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestMultiplePermissions(),
+            ) { /* SMS auto-detection and bill notifications stay off until granted. */ }
+
+            LaunchedEffect(Unit) {
+                val permissions = buildList {
+                    add(Manifest.permission.RECEIVE_SMS)
+                    add(Manifest.permission.READ_SMS)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        add(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+                permissionLauncher.launch(permissions.toTypedArray())
+            }
+
             ExpenseTrackerTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
-                        modifier = Modifier.padding(innerPadding)
-                    )
+                CompositionLocalProvider(LocalAppContainer provides container) {
+                    ExpenseTrackerNavGraph()
                 }
             }
         }
-    }
-}
-
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    ExpenseTrackerTheme {
-        Greeting("Android")
     }
 }

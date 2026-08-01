@@ -1,0 +1,91 @@
+package com.example.expensetracker.data.local
+
+import android.content.Context
+import androidx.room.Database
+import androidx.room.Room
+import androidx.room.RoomDatabase
+import androidx.room.TypeConverters
+import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.expensetracker.data.local.dao.BillDao
+import com.example.expensetracker.data.local.dao.BudgetDao
+import com.example.expensetracker.data.local.dao.CategoryDao
+import com.example.expensetracker.data.local.dao.LearnedPatternDao
+import com.example.expensetracker.data.local.dao.RawSmsDao
+import com.example.expensetracker.data.local.dao.TransactionDao
+import com.example.expensetracker.data.local.entity.BillEntity
+import com.example.expensetracker.data.local.entity.BudgetEntity
+import com.example.expensetracker.data.local.entity.CategoryEntity
+import com.example.expensetracker.data.local.entity.LearnedPatternEntity
+import com.example.expensetracker.data.local.entity.RawSmsEntity
+import com.example.expensetracker.data.local.entity.TransactionEntity
+import com.example.expensetracker.data.local.entity.UNASSIGNED_CATEGORY_NAME
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+
+@Database(
+    entities = [
+        TransactionEntity::class,
+        CategoryEntity::class,
+        BudgetEntity::class,
+        BillEntity::class,
+        RawSmsEntity::class,
+        LearnedPatternEntity::class,
+    ],
+    version = 1,
+    exportSchema = true,
+)
+@TypeConverters(Converters::class)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun transactionDao(): TransactionDao
+    abstract fun categoryDao(): CategoryDao
+    abstract fun budgetDao(): BudgetDao
+    abstract fun billDao(): BillDao
+    abstract fun rawSmsDao(): RawSmsDao
+    abstract fun learnedPatternDao(): LearnedPatternDao
+
+    companion object {
+        @Volatile private var instance: AppDatabase? = null
+
+        fun getInstance(context: Context): AppDatabase =
+            instance ?: synchronized(this) {
+                instance ?: build(context).also { instance = it }
+            }
+
+        private fun build(context: Context): AppDatabase =
+            Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "expense_tracker.db")
+                .addCallback(SeedCallback(context.applicationContext))
+                .build()
+
+        val DEFAULT_CATEGORIES: List<CategoryEntity> = listOf(
+            CategoryEntity(name = "Food & Dining", icon = "restaurant", colour = 0xFFFF7043L),
+            CategoryEntity(name = "Groceries", icon = "grocery", colour = 0xFF8BC34AL),
+            CategoryEntity(name = "Transport", icon = "directions_car", colour = 0xFF42A5F5L),
+            CategoryEntity(name = "Shopping", icon = "shopping_cart", colour = 0xFFAB47BCL),
+            CategoryEntity(name = "Bills & Utilities", icon = "receipt", colour = 0xFFFFCA28L),
+            CategoryEntity(name = "Entertainment", icon = "movie", colour = 0xFFEC407AL),
+            CategoryEntity(name = "Health", icon = "local_hospital", colour = 0xFFEF5350L),
+            CategoryEntity(name = "Rent & Housing", icon = "home", colour = 0xFF26A69AL),
+            CategoryEntity(name = "Salary", icon = "attach_money", colour = 0xFF66BB6AL, isIncome = true),
+        )
+    }
+
+    private class SeedCallback(private val context: Context) : Callback() {
+        override fun onCreate(db: SupportSQLiteDatabase) {
+            super.onCreate(db)
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                val dao = getInstance(context).categoryDao()
+                dao.insert(
+                    CategoryEntity(
+                        name = UNASSIGNED_CATEGORY_NAME,
+                        icon = "category",
+                        colour = 0xFF9E9E9EL,
+                        isIncome = false,
+                    ),
+                )
+                DEFAULT_CATEGORIES.forEach { dao.insert(it) }
+            }
+        }
+    }
+}

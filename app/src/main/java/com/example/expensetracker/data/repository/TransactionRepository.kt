@@ -1,0 +1,40 @@
+package com.example.expensetracker.data.repository
+
+import com.example.expensetracker.data.local.dao.CategorySpend
+import com.example.expensetracker.data.local.dao.TransactionDao
+import com.example.expensetracker.data.local.entity.Direction
+import com.example.expensetracker.data.local.entity.TransactionEntity
+import kotlinx.coroutines.flow.Flow
+import kotlinx.datetime.Instant
+
+class TransactionRepository(private val transactionDao: TransactionDao) {
+    fun observeAll(): Flow<List<TransactionEntity>> = transactionDao.observeAll()
+
+    fun observeInRange(start: Instant, end: Instant): Flow<List<TransactionEntity>> =
+        transactionDao.observeInRange(start, end)
+
+    fun search(
+        start: Instant? = null,
+        end: Instant? = null,
+        categoryId: Long? = null,
+        accountLabel: String? = null,
+        tag: String? = null,
+        merchantQuery: String? = null,
+        minAmountMinor: Long? = null,
+        maxAmountMinor: Long? = null,
+    ): Flow<List<TransactionEntity>> = transactionDao.search(
+        start, end, categoryId, accountLabel, tag, merchantQuery, minAmountMinor, maxAmountMinor,
+    )
+
+    fun observeSpendByCategory(start: Instant, end: Instant): Flow<List<CategorySpend>> =
+        transactionDao.observeSpendByCategory(start, end)
+
+    fun observeTotalByDirection(start: Instant, end: Instant, direction: Direction): Flow<Long> =
+        transactionDao.observeTotalByDirection(start, end, direction)
+
+    suspend fun create(transaction: TransactionEntity): Long = transactionDao.insert(transaction)
+
+    suspend fun update(transaction: TransactionEntity) = transactionDao.update(transaction)
+
+    suspend fun delete(id: Long) = transactionDao.delete(id)
+}
