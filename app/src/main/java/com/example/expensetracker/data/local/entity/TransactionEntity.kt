@@ -20,7 +20,13 @@ enum class TransactionSource { SMS, MANUAL }
             onDelete = ForeignKey.SET_NULL,
         ),
     ],
-    indices = [Index("categoryId"), Index("occurredAt"), Index("rawSmsId")],
+    indices = [
+        Index("categoryId"),
+        Index("occurredAt"),
+        Index("rawSmsId"),
+        Index("referenceId"),
+        Index("transferGroupId"),
+    ],
 )
 data class TransactionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -39,4 +45,19 @@ data class TransactionEntity(
     val source: TransactionSource,
     val isPrivate: Boolean = false,
     val rawSmsId: Long? = null,
+    /**
+     * The bank's own reference for this movement of money, when the SMS carried one.
+     *
+     * Banks send two messages for a single transfer — a debit alert and a confirmation — and this
+     * is the exact link between them, used to avoid recording the payment twice.
+     */
+    val referenceId: String? = null,
+    /**
+     * Links the two legs of a transfer between the user's own accounts. Both rows are kept — each
+     * account's history stays truthful — but neither counts as spending or income, because no money
+     * entered or left the user's control.
+     *
+     * A group can hold a single leg when only one of the two messages arrived.
+     */
+    val transferGroupId: String? = null,
 )

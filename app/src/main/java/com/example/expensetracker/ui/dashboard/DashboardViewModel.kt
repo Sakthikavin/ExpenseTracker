@@ -31,6 +31,12 @@ data class DashboardUiState(
     val rangeEnd: LocalDate = defaultThisMonthRange().second,
     val incomeMinor: Long = 0,
     val expenseMinor: Long = 0,
+    /**
+     * Money moved between the user's own accounts. Excluded from [incomeMinor] and [expenseMinor],
+     * but shown rather than hidden — money that vanishes from a total with no explanation is worse
+     * than money counted wrongly.
+     */
+    val transferMinor: Long = 0,
     val spendByCategory: List<CategorySpendRow> = emptyList(),
 )
 
@@ -77,6 +83,13 @@ class DashboardViewModel(
         )
     }
 
+    private val transfers = _selectedRange.flatMapLatest { (start, end) ->
+        transactionRepository.observeTransferTotal(
+            start.atStartOfDayIn(zone),
+            end.atTime(23, 59, 59).toInstant(zone),
+        )
+    }
+
     private val spendByCategory = _selectedRange.flatMapLatest { (start, end) ->
         transactionRepository.observeSpendByCategory(
             start.atStartOfDayIn(zone),
@@ -110,5 +123,9 @@ class DashboardViewModel(
                 }
                 .sortedByDescending { it.totalMinor },
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DashboardUiState())
+    }
+        // Folded in separately: `combine` only takes five flows before it degrades into an
+        // untyped array, and this reads better than casting.
+        .combine(transfers) { state, transferTotal -> state.copy(transferMinor = transferTotal) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DashboardUiState())
 }

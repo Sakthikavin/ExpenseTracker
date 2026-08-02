@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 
 class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -17,7 +18,6 @@ class SmsReceiver : BroadcastReceiver() {
         if (messages.isNullOrEmpty()) return
 
         val smsRepository = (context.applicationContext as ExpenseTrackerApp).container.smsRepository
-        val receivedAt = Clock.System.now()
         val pendingResult = goAsync()
 
         CoroutineScope(Dispatchers.IO).launch {
@@ -26,6 +26,13 @@ class SmsReceiver : BroadcastReceiver() {
                     .groupBy { it.originatingAddress.orEmpty() }
                     .forEach { (sender, parts) ->
                         val body = parts.joinToString(separator = "") { it.messageBody.orEmpty() }
+                        // The network's own timestamp, not Clock.System.now(): it is identical
+                        // across redeliveries of the same message, which is what lets the
+                        // (sender, body, receivedAt) index recognise a duplicate broadcast.
+                        val receivedAt = parts.first().timestampMillis
+                            .takeIf { it > 0 }
+                            ?.let(Instant::fromEpochMilliseconds)
+                            ?: Clock.System.now()
                         smsRepository.ingest(sender, body, receivedAt)
                     }
             } finally {

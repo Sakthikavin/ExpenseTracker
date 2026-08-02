@@ -93,12 +93,28 @@ The sender ("HDFCBK", "SBIBNK") and body can be anything reasonably bank-alert-s
 the parser looks for `Rs <amount> debited/credited ... to/from/at <name>`. These should
 appear in the Transactions tab within a second or two.
 
+> **The emulator console cannot send multi-line messages.** `adb emu sms send` truncates the body at
+> the first newline, so an Axis or HDFC UPI block alert arrives as just its first line and lands in
+> the review queue. That is a limitation of the console, not of the parser. Multi-line formats are
+> covered on-device by `SmsRepositoryTest.ingestsMultiLineBlockFormatAlerts` (see §8), which feeds
+> the real text through the real ingest path.
+
+To watch the duplicate-detection rules work, send an NPS-style pair — one debit alert and its NEFT
+confirmation, sharing a reference. Only **one** ₹5,000 debit should appear:
+
+```bash
+adb emu sms send HDFCBK "UPDATE: INR 5,000.00 debited from HDFC Bank XX3941 on 05-MAR-26. Info: NEFT Dr-UTIB0CCH274-A B C-HDFCH00842011992-NET BANKING SI -NPS Contribution M. Avl bal:INR 84,966.79"
+adb emu sms send HDFCBK "HDFC Bank : NEFT money transfer Txn No HDFCH00842011992 for Rs INR 5,000.00 has been credited to A B C on 05-03-2026 at 04:01:54"
+```
+
 ## 7. What to check
 
 **Categories tab**
 - Default categories (Food & Dining, Groceries, Transport, Shopping, Bills & Utilities,
-  Entertainment, Health, Rent & Housing, Salary) show up automatically with distinct
-  colored icons — no need to create them yourself.
+  Entertainment, Health, Rent & Housing, Investments, Transfers, Salary) show up
+  automatically with distinct colored icons — no need to create them yourself.
+- These are seeded once, when the database is first created. Adding to the list only affects
+  a **fresh install** (or after `pm clear`); an existing database keeps the categories it has.
 - Tap **+** to add a new category: you can pick both an icon and a color before saving.
 
 **Transactions tab**
@@ -106,6 +122,17 @@ appear in the Transactions tab within a second or two.
 - Tap the category badge/text under a merchant name (e.g. "Unassigned") to open a dropdown
   and (re)categorize it — the change saves immediately. The category's icon shows both on
   the row and in the dropdown list.
+
+**My accounts** (bank icon, top right)
+- Every account label seen in a message is listed automatically — no typing account numbers.
+- Toggle the ones that are yours and give them names. From then on, money moving between two of
+  them is recorded as a transfer rather than as spending plus income.
+
+**Transfers**
+- A matched transfer shows as one row: `⇄ Transfer · XX3941 → XX4795`, marked "Not counted as
+  spending", with the Dashboard stating the amount separately beneath the totals.
+- The ⋮ menu on any transaction has **Mark as transfer** (pick the other leg, or "No matching
+  message" if only one bank sent one); on a paired row it has **Not a transfer** to undo.
 
 **Budgets tab and Review tab**
 - Category icons now show next to category names here too (budget rows, and the category
@@ -119,6 +146,42 @@ appear in the Transactions tab within a second or two.
     legend below showing each category's icon, name, percentage of total spend, and amount.
   - **Table**: the same data as icon + name + percentage + amount rows, each with a colored
     progress bar sized to its share of the total.
+
+## 8. Run the automated tests
+
+The SMS pipeline is covered by two suites. Run both before shipping a parser change.
+
+**Unit tests** — pure Kotlin, no emulator needed, a few seconds:
+
+```bash
+./gradlew :app:testDebugUnitTest
+```
+
+Covers tier-1 parsing per message format, date extraction, amount conversion, and pattern
+generalisation. When a new bank format shows up, add it to the corpus in `BankTemplatesTest`
+*first*, watch it fail, then change the regex.
+
+**Instrumentation tests** — need the emulator from step 1 running:
+
+```bash
+./gradlew :app:connectedDebugAndroidTest
+```
+
+Covers the database v1 → v2 migration against a real old database, and the ingest path end to end
+(deduplication, raw↔transaction linking, dates, and the confirm-then-auto-parse learning loop).
+
+To run a single class:
+
+```bash
+./gradlew :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.example.expensetracker.data.local.MigrationTest
+```
+
+> `--tests` does **not** work on `connectedDebugAndroidTest`; use the runner argument above.
+
+**Migration check before installing over real data.** `MigrationTest` proves the upgrade in
+isolation, but if you have a build with real transactions on your phone, install the new APK over it
+(not after `pm clear`) and confirm the app opens with the transactions intact.
 
 ## Troubleshooting
 

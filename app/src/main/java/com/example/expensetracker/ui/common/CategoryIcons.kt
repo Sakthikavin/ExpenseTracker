@@ -13,6 +13,8 @@ import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.ui.graphics.vector.ImageVector
 
 /** Icon keys are stored on [com.example.expensetracker.data.local.entity.CategoryEntity.icon]. */
@@ -29,6 +31,8 @@ object CategoryIcons {
         "attach_money" to Icons.Filled.AttachMoney,
         "school" to Icons.Filled.School,
         "fitness_center" to Icons.Filled.FitnessCenter,
+        "swap_horiz" to Icons.Filled.SwapHoriz,
+        "trending_up" to Icons.Filled.TrendingUp,
         "category" to Icons.Filled.Category,
     )
 

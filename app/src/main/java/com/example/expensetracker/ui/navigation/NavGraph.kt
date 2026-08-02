@@ -20,6 +20,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.expensetracker.ui.accounts.AccountsScreen
 import com.example.expensetracker.ui.bills.BillsScreen
 import com.example.expensetracker.ui.budgets.BudgetsScreen
 import com.example.expensetracker.ui.categories.CategoriesScreen
@@ -40,6 +41,9 @@ fun ExpenseTrackerNavGraph() {
                 actions = {
                     IconButton(onClick = { navController.navigate(Destination.Categories.route) { launchSingleTop = true } }) {
                         Icon(Icons.Filled.Category, contentDescription = "Categories")
+                    }
+                    IconButton(onClick = { navController.navigate(Destination.Accounts.route) { launchSingleTop = true } }) {
+                        Icon(Destination.Accounts.icon, contentDescription = Destination.Accounts.label)
                     }
                     IconButton(onClick = { navController.navigate(Destination.Settings.route) { launchSingleTop = true } }) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
@@ -79,6 +83,7 @@ fun ExpenseTrackerNavGraph() {
             composable(Destination.Budgets.route) { BudgetsScreen() }
             composable(Destination.Bills.route) { BillsScreen() }
             composable(Destination.Categories.route) { CategoriesScreen() }
+            composable(Destination.Accounts.route) { AccountsScreen() }
             composable(Destination.Settings.route) { SettingsScreen() }
         }
     }

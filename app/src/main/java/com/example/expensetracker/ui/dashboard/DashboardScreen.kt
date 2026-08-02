@@ -112,6 +112,19 @@ fun DashboardScreen() {
             }
         }
 
+        // Transfers are excluded from the totals above, so state what happened to that money
+        // rather than letting it silently disappear from the picture.
+        if (state.transferMinor > 0) {
+            item {
+                Text(
+                    text = "Plus ${formatMinorUnitsAsInr(state.transferMinor)} moved between your " +
+                        "own accounts, not counted as income or expense.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Themed-icon (Android 13+) layer. Identical geometry to
+  ic_launcher_foreground, but flat and fully opaque: Android builds the
+  themed silhouette from the alpha channel alone, so no gradients or
+  partially transparent fills may appear here.
+
+  GENERATED from the icon geometry spec. The same primitives produce the
+  legacy mipmap rasters, so edit the spec and regenerate rather than
+  tweaking coordinates here.
+
+  108x108 adaptive viewport. Content bounds x 27.86..80.14,
+  y 33.86..74.14; bounding-circle radius 33.00 about (54,54), which
+  fits the 66dp safe-zone CIRCLE so no launcher mask clips it.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- rupee: top bar -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M29.23,33.86h15.26a1.37,1.37 0 0 1 1.37,1.37v2.23a1.37,1.37 0 0 1 -1.37,1.37h-15.26a1.37,1.37 0 0 1 -1.37,-1.37v-2.23a1.37,1.37 0 0 1 1.37,-1.37z" />
+    <!-- rupee: mid bar -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M29.23,45h15.26a1.37,1.37 0 0 1 1.37,1.37v2.23a1.37,1.37 0 0 1 -1.37,1.37h-15.26a1.37,1.37 0 0 1 -1.37,-1.37v-2.23a1.37,1.37 0 0 1 1.37,-1.37z" />
+    <!-- rupee: right stem closing the bowl -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M42.26,33.86h2.23a1.37,1.37 0 0 1 1.37,1.37v13.37a1.37,1.37 0 0 1 -1.37,1.37h-2.23a1.37,1.37 0 0 1 -1.37,-1.37v-13.37a1.37,1.37 0 0 1 1.37,-1.37z" />
+    <!-- rupee: diagonal leg -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M32.02,49.97L37.29,49.97L45.86,74.14L40.59,74.14z" />
+    <!-- bar 1 (shortest) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M55.63,58.71h1.89a2.06,2.06 0 0 1 2.06,2.06v11.31a2.06,2.06 0 0 1 -2.06,2.06h-1.89a2.06,2.06 0 0 1 -2.06,-2.06v-11.31a2.06,2.06 0 0 1 2.06,-2.06z" />
+    <!-- bar 2 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M65.91,49.29h1.89a2.06,2.06 0 0 1 2.06,2.06v20.74a2.06,2.06 0 0 1 -2.06,2.06h-1.89a2.06,2.06 0 0 1 -2.06,-2.06v-20.74a2.06,2.06 0 0 1 2.06,-2.06z" />
+    <!-- bar 3 (tallest) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M76.2,39h1.89a2.06,2.06 0 0 1 2.06,2.06v31.03a2.06,2.06 0 0 1 -2.06,2.06h-1.89a2.06,2.06 0 0 1 -2.06,-2.06v-31.03a2.06,2.06 0 0 1 2.06,-2.06z" />
+</vector>

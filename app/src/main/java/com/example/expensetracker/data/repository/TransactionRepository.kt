@@ -34,6 +34,25 @@ class TransactionRepository(private val transactionDao: TransactionDao) {
 
     suspend fun create(transaction: TransactionEntity): Long = transactionDao.insert(transaction)
 
+    /** @see com.example.expensetracker.data.local.dao.TransactionDao.findByReference */
+    suspend fun findByReference(referenceId: String): TransactionEntity? =
+        transactionDao.findByReference(referenceId)
+
+    /** @see com.example.expensetracker.data.local.dao.TransactionDao.findOppositeCounterpart */
+    suspend fun findOppositeCounterpart(
+        amountMinor: Long,
+        direction: Direction,
+        dayStart: Instant,
+        dayEnd: Instant,
+    ): TransactionEntity? =
+        transactionDao.findOppositeCounterpart(amountMinor, direction, dayStart, dayEnd)
+
+    /** Money moved between the user's own accounts in this window — shown apart from spending. */
+    fun observeTransferTotal(start: Instant, end: Instant): Flow<Long> =
+        transactionDao.observeTransferTotal(start, end)
+
+    suspend fun getById(id: Long): TransactionEntity? = transactionDao.getById(id)
+
     suspend fun update(transaction: TransactionEntity) = transactionDao.update(transaction)
 
     suspend fun delete(id: Long) = transactionDao.delete(id)

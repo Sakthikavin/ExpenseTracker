@@ -37,6 +37,12 @@ android {
     ksp {
         arg("room.schemaLocation", "$projectDir/schemas")
     }
+
+    // MigrationTestHelper reads the exported schemas at runtime, so they have to ship inside the
+    // instrumentation APK as assets.
+    sourceSets.getByName("androidTest") {
+        assets.srcDirs(files("$projectDir/schemas"))
+    }
 }
 
 dependencies {
@@ -62,6 +68,7 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.room.testing)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
