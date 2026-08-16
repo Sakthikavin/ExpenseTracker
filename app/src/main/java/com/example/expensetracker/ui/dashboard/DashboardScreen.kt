@@ -4,28 +4,31 @@ package com.example.expensetracker.ui.dashboard
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DateRangePicker
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.runtime.Composable
@@ -41,6 +44,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import com.example.expensetracker.ui.common.AddTransactionDialog
 import com.example.expensetracker.ui.common.CategoryBadge
 import com.example.expensetracker.ui.common.LocalAppContainer
 import com.example.expensetracker.ui.common.appViewModel
@@ -55,123 +59,158 @@ import kotlinx.datetime.toLocalDateTime
 private enum class SpendByCategoryView { CHART, TABLE }
 
 @Composable
-fun DashboardScreen() {
+fun DashboardScreen(
+    onNavigateToReview: () -> Unit,
+    onNavigateToBudgets: () -> Unit,
+    onNavigateToTransactions: () -> Unit,
+) {
     val container = LocalAppContainer.current
-    val viewModel = appViewModel { DashboardViewModel(container.transactionRepository, container.categoryRepository) }
+    val viewModel = appViewModel {
+        DashboardViewModel(
+            container.transactionRepository,
+            container.categoryRepository,
+            container.budgetRepository,
+            container.smsRepository,
+        )
+    }
     val state by viewModel.uiState.collectAsState()
     val selectedRange by viewModel.selectedRange.collectAsState()
-    var isCustomSelected by remember { mutableStateOf(false) }
+    var showPresetSheet by remember { mutableStateOf(false) }
     var showRangePicker by remember { mutableStateOf(false) }
+    var showAddDialog by remember { mutableStateOf(false) }
     var spendView by remember { mutableStateOf(SpendByCategoryView.CHART) }
+    val categories by viewModel.categoriesState.collectAsState()
 
-    LazyColumn(
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = !isCustomSelected,
-                    onClick = {
-                        isCustomSelected = false
-                        viewModel.selectThisMonth()
-                    },
-                    label = { Text("This month") },
-                )
-                FilterChip(
-                    selected = isCustomSelected,
-                    onClick = {
-                        isCustomSelected = true
-                        showRangePicker = true
-                    },
-                    label = { Text("Custom range") },
-                )
+    Scaffold(
+        containerColor = DashboardPalette.PagePlane,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        floatingActionButton = {
+            FloatingActionButton(onClick = { showAddDialog = true }) {
+                Icon(Icons.Filled.Add, contentDescription = "Add transaction")
             }
-        }
-
-        item {
-            Text(
-                text = formatDateRange(state.rangeStart, state.rangeEnd),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TotalCard(
-                    label = "Income",
-                    amountMinor = state.incomeMinor,
-                    modifier = Modifier.weight(1f),
-                )
-                TotalCard(
-                    label = "Expense",
-                    amountMinor = state.expenseMinor,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-
-        // Transfers are excluded from the totals above, so state what happened to that money
-        // rather than letting it silently disappear from the picture.
-        if (state.transferMinor > 0) {
+        },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.padding(padding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             item {
-                Text(
-                    text = "Plus ${formatMinorUnitsAsInr(state.transferMinor)} moved between your " +
-                        "own accounts, not counted as income or expense.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                DatePagerRow(
+                    label = periodLabel(state.datePreset, state.rangeStart, state.rangeEnd),
+                    onPrev = { viewModel.stepPeriod(forward = false) },
+                    onNext = { viewModel.stepPeriod(forward = true) },
+                    onLabelClick = { showPresetSheet = true },
                 )
             }
-        }
 
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Spend by category",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-                SingleChoiceSegmentedButtonRow {
-                    SpendByCategoryView.entries.forEachIndexed { index, view ->
-                        SegmentedButton(
-                            selected = spendView == view,
-                            onClick = { spendView = view },
-                            shape = SegmentedButtonDefaults.itemShape(index, SpendByCategoryView.entries.size),
-                        ) { Text(if (view == SpendByCategoryView.CHART) "Chart" else "Table") }
-                    }
-                }
-            }
-        }
-
-        if (state.spendByCategory.isEmpty()) {
-            item { Text("No expenses recorded for this range yet.") }
-        } else if (spendView == SpendByCategoryView.CHART) {
             item {
-                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    CategoryPieChart(
-                        rows = state.spendByCategory,
-                        totalMinor = state.spendByCategory.sumOf { it.totalMinor },
-                        modifier = Modifier.size(180.dp),
+                SavingsHero(
+                    savedMinor = state.savedMinor,
+                    deltaPercent = state.savingsDeltaPercent,
+                    savedPercentOfIncome = state.savedPercentOfIncome,
+                    incomeMinor = state.incomeMinor,
+                    expenseMinor = state.expenseMinor,
+                    periodLabel = periodNoun(state.datePreset),
+                )
+            }
+
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    StatTile(
+                        label = "Income",
+                        amountMinor = state.incomeMinor,
+                        dotColor = DashboardPalette.StatusGood,
+                        modifier = Modifier.weight(1f),
+                    )
+                    StatTile(
+                        label = "Expense",
+                        amountMinor = state.expenseMinor,
+                        dotColor = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.weight(1f),
                     )
                 }
             }
-            items(state.spendByCategory) { row ->
-                CategoryLegendRow(row)
+
+            // Transfers are excluded from the totals above, so state what happened to that money
+            // rather than letting it silently disappear from the picture.
+            if (state.transferMinor > 0) {
+                item { TransferChip(amountMinor = state.transferMinor) }
             }
-        } else {
-            val maxSpend = state.spendByCategory.maxOf { it.totalMinor }.coerceAtLeast(1)
-            items(state.spendByCategory) { row ->
-                CategorySpendBar(
-                    row = row,
-                    fraction = row.totalMinor.toFloat() / maxSpend.toFloat(),
-                )
+
+            if (state.reviewCount > 0) {
+                item { ReviewBanner(count = state.reviewCount, onClick = onNavigateToReview) }
+            }
+
+            if (state.budgetGlance.isNotEmpty()) {
+                item {
+                    BudgetGlanceSection(rows = state.budgetGlance, onSeeAll = onNavigateToBudgets)
+                }
+            }
+
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Spend by category",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = DashboardPalette.TextPrimary,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    SingleChoiceSegmentedButtonRow {
+                        SpendByCategoryView.entries.forEachIndexed { index, view ->
+                            SegmentedButton(
+                                selected = spendView == view,
+                                onClick = { spendView = view },
+                                shape = SegmentedButtonDefaults.itemShape(index, SpendByCategoryView.entries.size),
+                            ) { Text(if (view == SpendByCategoryView.CHART) "Chart" else "Table") }
+                        }
+                    }
+                }
+            }
+
+            if (state.spendByCategory.isEmpty()) {
+                item { Text("No expenses recorded for this range yet.", color = DashboardPalette.TextMuted) }
+            } else if (spendView == SpendByCategoryView.CHART) {
+                item {
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        CategoryPieChart(
+                            rows = state.spendByCategory,
+                            totalMinor = state.spendByCategory.sumOf { it.totalMinor },
+                            modifier = Modifier.size(180.dp),
+                        )
+                    }
+                }
+                items(state.spendByCategory) { row ->
+                    CategoryLegendRow(
+                        row = row,
+                        onCategorize = onNavigateToTransactions,
+                    )
+                }
+            } else {
+                items(state.spendByCategory) { row ->
+                    CategoryDeltaRow(row = row, deltaPercent = state.categoryDeltaPercent[row.category?.id])
+                }
             }
         }
+    }
+
+    if (showPresetSheet) {
+        DatePresetSheet(
+            selected = state.datePreset,
+            onSelect = { preset ->
+                viewModel.selectPreset(preset)
+                showPresetSheet = false
+            },
+            onCustomRangeRequested = {
+                showPresetSheet = false
+                showRangePicker = true
+            },
+            onDismiss = { showPresetSheet = false },
+        )
     }
 
     if (showRangePicker) {
@@ -185,6 +224,44 @@ fun DashboardScreen() {
             },
         )
     }
+
+    if (showAddDialog) {
+        AddTransactionDialog(
+            categories = categories,
+            onDismiss = { showAddDialog = false },
+            onSave = { amountMinor, direction, merchant, accountLabel, categoryId, note ->
+                viewModel.addManualTransaction(
+                    amountMinor = amountMinor,
+                    direction = direction,
+                    merchant = merchant,
+                    accountLabel = accountLabel,
+                    categoryId = categoryId,
+                    note = note,
+                )
+                showAddDialog = false
+            },
+        )
+    }
+}
+
+private fun periodNoun(preset: DatePreset): String = when (preset) {
+    DatePreset.TODAY -> "day"
+    DatePreset.LAST_7_DAYS, DatePreset.LAST_30_DAYS, DatePreset.CUSTOM -> "period"
+    DatePreset.THIS_MONTH, DatePreset.LAST_MONTH -> "month"
+    DatePreset.THIS_YEAR -> "year"
+}
+
+private val MONTH_NAMES = listOf(
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)
+
+private fun periodLabel(preset: DatePreset, start: LocalDate, end: LocalDate): String = when {
+    preset == DatePreset.THIS_MONTH || preset == DatePreset.LAST_MONTH ->
+        "${MONTH_NAMES[start.monthNumber - 1]} ${start.year}"
+    preset == DatePreset.THIS_YEAR -> "${start.year}"
+    preset == DatePreset.TODAY -> formatDateRange(start, end)
+    else -> formatDateRange(start, end)
 }
 
 @Composable
@@ -225,16 +302,6 @@ private fun DateRangePickerDialog(
 private fun LocalDate.atStartOfDayEpochMillis(): Long =
     this.atStartOfDayIn(TimeZone.UTC).toEpochMilliseconds()
 
-@Composable
-private fun TotalCard(label: String, amountMinor: Long, modifier: Modifier = Modifier) {
-    Card(modifier = modifier, colors = CardDefaults.cardColors()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(text = label, style = MaterialTheme.typography.labelMedium)
-            Text(text = formatMinorUnitsAsInr(amountMinor), style = MaterialTheme.typography.headlineSmall)
-        }
-    }
-}
-
 private fun formatPercentage(percentage: Float): String = "%.1f%%".format(percentage)
 
 @Composable
@@ -257,70 +324,48 @@ private fun CategoryPieChart(rows: List<CategorySpendRow>, totalMinor: Long, mod
                 startAngle += sweep
             }
         }
-        Text(
-            text = formatMinorUnitsAsInr(totalMinor),
-            style = MaterialTheme.typography.titleMedium,
-        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = formatMinorUnitsAsInr(totalMinor),
+                style = MaterialTheme.typography.titleMedium,
+                color = DashboardPalette.TextPrimary,
+            )
+            Text(
+                text = "Total spend",
+                style = MaterialTheme.typography.labelSmall,
+                color = DashboardPalette.TextMuted,
+            )
+        }
     }
 }
 
 @Composable
-private fun CategoryLegendRow(row: CategorySpendRow) {
+private fun CategoryLegendRow(row: CategorySpendRow, onCategorize: () -> Unit) {
+    val isUnassigned = row.category == null
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CategoryBadge(row.category, size = 22.dp)
-            Text(text = row.category?.name ?: "Unassigned", style = MaterialTheme.typography.bodyMedium)
+            Text(text = row.category?.name ?: "Unassigned", style = MaterialTheme.typography.bodyMedium, color = DashboardPalette.TextPrimary)
+            if (isUnassigned) {
+                Text(
+                    "Categorize →",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable(onClick = onCategorize),
+                )
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 text = formatPercentage(row.percentage),
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = DashboardPalette.TextMuted,
             )
-            Text(text = formatMinorUnitsAsInr(row.totalMinor), style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
-@Composable
-private fun CategorySpendBar(row: CategorySpendRow, fraction: Float) {
-    val color = Color(row.category?.colour ?: 0xFF9E9E9EL)
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CategoryBadge(row.category, size = 22.dp)
-                Text(text = row.category?.name ?: "Unassigned", style = MaterialTheme.typography.bodyMedium)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = formatPercentage(row.percentage),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(text = formatMinorUnitsAsInr(row.totalMinor), style = MaterialTheme.typography.bodyMedium)
-            }
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(8.dp)
-                .padding(top = 4.dp)
-                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp)),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(fraction.coerceIn(0f, 1f))
-                    .height(8.dp)
-                    .background(color, RoundedCornerShape(4.dp)),
-            )
+            Text(text = formatMinorUnitsAsInr(row.totalMinor), style = MaterialTheme.typography.bodyMedium, color = DashboardPalette.TextPrimary)
         }
     }
 }

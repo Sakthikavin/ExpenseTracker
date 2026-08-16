@@ -57,3 +57,9 @@ lint/intermediates/
 lint/generated/
 lint/outputs/
 lint/tmp/
+
+# --- Design mockups / reference files (not app source) ---
+/*.html
+/images/
+/preview_daterange.png
+/UX_REDESIGN_PLAN.md

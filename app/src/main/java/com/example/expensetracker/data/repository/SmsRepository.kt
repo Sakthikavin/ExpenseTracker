@@ -96,7 +96,13 @@ class SmsRepository(
         }
     }
 
-    /** Manual confirmation from the "needs review" queue; also attempts to learn a pattern. */
+    /**
+     * Manual confirmation from the "needs review" queue; also attempts to learn a pattern.
+     *
+     * If [rawSms] is already linked to a transaction — a re-confirmation, or a double-tap on Save
+     * before the item left the queue — that transaction is updated in place rather than inserting
+     * a second row that the raw SMS would then silently stop pointing at.
+     */
     suspend fun confirmReview(
         rawSms: RawSmsEntity,
         amountMinor: Long,
@@ -105,20 +111,41 @@ class SmsRepository(
         categoryId: Long?,
         accountLabel: String,
     ) {
-        val transactionId = createTransaction(
-            amountMinor = amountMinor,
-            direction = direction,
-            merchant = merchant,
-            rawSmsId = rawSms.id,
-            // The message's own date if it has one, else when we received it — never "now", which
-            // would date a message confirmed days later to the day it was confirmed.
-            occurredAt = SmsDateParser.parse(rawSms.body) ?: rawSms.receivedAt,
-            categoryId = categoryId,
-            accountLabel = accountLabel,
-        )
+        // The message's own date if it has one, else when we received it — never "now", which
+        // would date a message confirmed days later to the day it was confirmed.
+        val occurredAt = SmsDateParser.parse(rawSms.body) ?: rawSms.receivedAt
+        val existing = rawSms.linkedTransactionId?.let { transactionRepository.getById(it) }
+        val transactionId = if (existing != null) {
+            transactionRepository.update(
+                existing.copy(
+                    amountMinor = amountMinor,
+                    direction = direction,
+                    merchant = merchant,
+                    occurredAt = occurredAt,
+                    categoryId = categoryId,
+                    accountLabel = accountLabel,
+                ),
+            )
+            existing.id
+        } else {
+            createTransaction(
+                amountMinor = amountMinor,
+                direction = direction,
+                merchant = merchant,
+                rawSmsId = rawSms.id,
+                occurredAt = occurredAt,
+                categoryId = categoryId,
+                accountLabel = accountLabel,
+            )
+        }
         rawSmsDao.update(rawSms.copy(parseStatus = ParseStatus.PARSED, linkedTransactionId = transactionId))
 
         learnPattern(rawSms, amountMinor, merchant, direction)
+    }
+
+    /** Manual dismissal from the "needs review" queue; creates no transaction. */
+    suspend fun dismissReview(rawSms: RawSmsEntity) {
+        rawSmsDao.update(rawSms.copy(parseStatus = ParseStatus.IGNORED))
     }
 
     /**
