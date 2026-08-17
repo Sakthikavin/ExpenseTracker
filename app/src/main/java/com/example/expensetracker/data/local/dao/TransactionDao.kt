@@ -87,9 +87,13 @@ interface TransactionDao {
     )
     fun observeTransferTotal(start: Instant, end: Instant): Flow<Long>
 
-    /** Exact duplicate detection: two SMS about one payment share the bank's reference. */
-    @Query("SELECT * FROM transactions WHERE referenceId = :referenceId AND source = 'SMS' LIMIT 1")
-    suspend fun findByReference(referenceId: String): TransactionEntity?
+    /**
+     * Every row sharing a reference — a transfer's two legs legitimately share one, so a caller
+     * that needs "is this message already recorded" must be able to tell those legs apart rather
+     * than getting an arbitrary one of them back.
+     */
+    @Query("SELECT * FROM transactions WHERE referenceId = :referenceId AND source = 'SMS'")
+    suspend fun findAllByReference(referenceId: String): List<TransactionEntity>
 
     /**
      * Fallback duplicate detection for transfer confirmations that omit the reference: the same

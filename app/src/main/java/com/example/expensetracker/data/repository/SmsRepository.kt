@@ -200,8 +200,18 @@ class SmsRepository(
         return left.isNotEmpty() && right.isNotEmpty() && !left.equals(right, ignoreCase = true)
     }
 
-    private suspend fun findByReference(parsed: ParsedSms): TransactionEntity? =
-        parsed.referenceId?.let { transactionRepository.findByReference(it) }
+    /**
+     * A transfer's two legs legitimately share one reference, so once both exist, a resend of
+     * either leg has two rows to choose from. Prefer the one that *is* this leg — same direction,
+     * same account — over an arbitrary one; picking the other leg by accident reads as "here's the
+     * transfer's other side" and creates a phantom duplicate instead of recognising the resend.
+     */
+    private suspend fun findByReference(parsed: ParsedSms): TransactionEntity? {
+        val candidates = parsed.referenceId?.let { transactionRepository.findAllByReference(it) }.orEmpty()
+        if (candidates.size <= 1) return candidates.firstOrNull()
+        return candidates.firstOrNull { it.direction == parsed.direction && !movesBetweenTwoAccounts(it, parsed) }
+            ?: candidates.first()
+    }
 
     /**
      * The fallback for confirmations that omit the reference: same amount, same day, opposite

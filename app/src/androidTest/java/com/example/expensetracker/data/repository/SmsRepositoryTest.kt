@@ -318,6 +318,63 @@ class SmsRepositoryTest {
         )
     }
 
+    /**
+     * A re-confirmation — a double-tap on Save before the item left the queue, or the item somehow
+     * being confirmed a second time — must update the transaction it's already linked to, not
+     * insert a second row the raw SMS silently stops pointing at.
+     */
+    @Test
+    fun reConfirmingAnAlreadyLinkedItemUpdatesInsteadOfDuplicating() = runBlocking {
+        val body = "Purchase of Rs 599.00 on your ICICI Card XX12 at NETFLIX.COM. Avl Lmt Rs 45000"
+        repository.ingest("AD-ICICIB", body, Instant.fromEpochMilliseconds(1_785_657_168_000))
+
+        val queued = db.rawSmsDao().observeByStatus(ParseStatus.NEEDS_REVIEW).first().single()
+        repository.confirmReview(
+            rawSms = queued,
+            amountMinor = 59900,
+            direction = Direction.DEBIT,
+            merchant = "NETFLIX.COM",
+            categoryId = null,
+            accountLabel = "XX12",
+        )
+
+        val confirmedOnce = db.rawSmsDao().observeByStatus(ParseStatus.PARSED).first().single()
+        repository.confirmReview(
+            rawSms = confirmedOnce,
+            amountMinor = 64900,
+            direction = Direction.DEBIT,
+            merchant = "NETFLIX PREMIUM",
+            categoryId = null,
+            accountLabel = "XX12",
+        )
+
+        val transactions = db.transactionDao().observeAll().first()
+        assertEquals("a re-confirmation must update, not duplicate", 1, transactions.size)
+        assertEquals(64900L, transactions.single().amountMinor)
+        assertEquals("NETFLIX PREMIUM", transactions.single().merchant)
+    }
+
+    /**
+     * A transfer's two legs legitimately share one bank reference, so a naive "any row with this
+     * reference" lookup can match the *other* leg instead of the same leg being resent — mistaking
+     * "this message arrived again" for "here's the other side of the transfer" and creating a
+     * phantom, unpaired duplicate.
+     */
+    @Test
+    fun resendingATransferLegDoesNotCreateAPhantomDuplicate() = runBlocking {
+        repository.ingest("VM-HDFCBK", hdfcOut, Instant.fromEpochMilliseconds(1_785_657_168_000))
+        repository.ingest("AD-ICICIB", iciciIn, Instant.fromEpochMilliseconds(1_785_657_268_000))
+
+        // Both legs arrive again later — e.g. a re-run of a test seed script, or a bank resending —
+        // each with a different receivedAt, so the exact-redelivery unique index doesn't apply.
+        repository.ingest("VM-HDFCBK", hdfcOut, Instant.fromEpochMilliseconds(1_785_657_368_000))
+        repository.ingest("AD-ICICIB", iciciIn, Instant.fromEpochMilliseconds(1_785_657_468_000))
+
+        val transactions = db.transactionDao().observeAll().first()
+        assertEquals("resending both legs must not create new rows", 2, transactions.size)
+        assertTrue("both must remain paired", transactions.all { it.transferGroupId != null })
+    }
+
     /** Confirming a queued message must teach a pattern that the *next* message can use. */
     @Test
     fun confirmingAReviewTeachesAPatternThatParsesTheNextMessage() = runBlocking {

@@ -34,9 +34,9 @@ class TransactionRepository(private val transactionDao: TransactionDao) {
 
     suspend fun create(transaction: TransactionEntity): Long = transactionDao.insert(transaction)
 
-    /** @see com.example.expensetracker.data.local.dao.TransactionDao.findByReference */
-    suspend fun findByReference(referenceId: String): TransactionEntity? =
-        transactionDao.findByReference(referenceId)
+    /** @see com.example.expensetracker.data.local.dao.TransactionDao.findAllByReference */
+    suspend fun findAllByReference(referenceId: String): List<TransactionEntity> =
+        transactionDao.findAllByReference(referenceId)
 
     /** @see com.example.expensetracker.data.local.dao.TransactionDao.findOppositeCounterpart */
     suspend fun findOppositeCounterpart(
