@@ -51,6 +51,8 @@ import com.example.expensetracker.ui.common.LocalAppContainer
 import com.example.expensetracker.ui.common.appViewModel
 import com.example.expensetracker.ui.common.formatDate
 import com.example.expensetracker.ui.common.formatMinorUnitsAsInr
+import com.example.expensetracker.ui.dashboard.DashboardPalette
+import kotlinx.datetime.LocalDate
 
 @Composable
 fun TransactionsScreen() {
@@ -62,7 +64,7 @@ fun TransactionsScreen() {
             container.transferRepository,
         )
     }
-    val listItems by viewModel.listItems.collectAsState()
+    val groupedItems by viewModel.groupedItems.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val ownAccounts by viewModel.ownAccounts.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
@@ -77,28 +79,31 @@ fun TransactionsScreen() {
         },
     ) { padding ->
         Box(modifier = Modifier.padding(padding).fillMaxSize()) {
-            if (listItems.isEmpty()) {
+            if (groupedItems.isEmpty()) {
                 Text("No transactions yet.", modifier = Modifier.padding(16.dp))
             } else {
                 LazyColumn {
-                    items(listItems, key = { it.rowKey }) { item ->
-                        when (item) {
-                            is TransactionListItem.Single -> TransactionRow(
-                                transaction = item.transaction,
-                                category = categories.firstOrNull { it.id == item.transaction.categoryId },
-                                categories = categories,
-                                onDelete = { pendingDelete = item.transaction },
-                                onCategorySelected = { viewModel.updateCategory(item.transaction, it) },
-                                onMarkTransfer = { pendingTransferFor = item.transaction },
-                            )
+                    groupedItems.forEach { group ->
+                        item(key = "header-${group.date}") { DayHeader(group.date) }
+                        items(group.items, key = { it.rowKey }) { item ->
+                            when (item) {
+                                is TransactionListItem.Single -> TransactionRow(
+                                    transaction = item.transaction,
+                                    category = categories.firstOrNull { it.id == item.transaction.categoryId },
+                                    categories = categories,
+                                    onDelete = { pendingDelete = item.transaction },
+                                    onCategorySelected = { viewModel.updateCategory(item.transaction, it) },
+                                    onMarkTransfer = { pendingTransferFor = item.transaction },
+                                )
 
-                            is TransactionListItem.Transfer -> TransferRow(
-                                item = item,
-                                ownAccounts = ownAccounts,
-                                onUnlink = { viewModel.unlinkTransfer(item.groupId) },
-                            )
+                                is TransactionListItem.Transfer -> TransferRow(
+                                    item = item,
+                                    ownAccounts = ownAccounts,
+                                    onUnlink = { viewModel.unlinkTransfer(item.groupId) },
+                                )
+                            }
+                            HorizontalDivider()
                         }
-                        HorizontalDivider()
                     }
                 }
             }
@@ -162,6 +167,16 @@ fun TransactionsScreen() {
 }
 
 @Composable
+private fun DayHeader(date: LocalDate) {
+    Text(
+        formatDate(date),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    )
+}
+
+@Composable
 private fun TransactionRow(
     transaction: TransactionEntity,
     category: CategoryEntity?,
@@ -174,7 +189,6 @@ private fun TransactionRow(
     var overflowExpanded by remember { mutableStateOf(false) }
 
     ListItem(
-        overlineContent = { Text(formatDate(transaction.occurredAt)) },
         headlineContent = { Text(transaction.merchant.ifBlank { "(no merchant)" }) },
         supportingContent = {
             Box {
@@ -211,10 +225,13 @@ private fun TransactionRow(
                 val sign = if (transaction.direction == Direction.DEBIT) "-" else "+"
                 Text(
                     text = "$sign${formatMinorUnitsAsInr(transaction.amountMinor)}",
+                    // Red on every debit — most rows — drains it of meaning; plain ink reads as
+                    // ordinary spending, leaving red for actual alerts (budgets, real problems).
+                    // Credit still stands out with a leading "+" and green, since income is rarer.
                     color = if (transaction.direction == Direction.DEBIT) {
-                        MaterialTheme.colorScheme.error
+                        MaterialTheme.colorScheme.onSurface
                     } else {
-                        MaterialTheme.colorScheme.primary
+                        DashboardPalette.StatusGood
                     },
                 )
                 Box {
@@ -270,7 +287,6 @@ private fun TransferRow(
     }
 
     ListItem(
-        overlineContent = { Text(formatDate(item.sortKey)) },
         headlineContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(

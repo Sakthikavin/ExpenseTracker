@@ -344,8 +344,9 @@ private fun styleFor(status: BudgetStatus): StatusStyle = when (status) {
     BudgetStatus.CRITICAL -> StatusStyle(DashboardPalette.CriticalPillBg, DashboardPalette.CriticalPillText, DashboardPalette.StatusCritical, "Over budget")
 }
 
+/** Public so `ui/budgets/BudgetsScreen.kt` can reuse it for "Needs attention" rows there too. */
 @Composable
-private fun BudgetGlanceItem(row: BudgetGlanceRow) {
+fun BudgetGlanceItem(row: BudgetGlanceRow, modifier: Modifier = Modifier) {
     val style = styleFor(row.status)
     val remainingMinor = row.limitMinor - row.spentMinor
     val caption = if (remainingMinor >= 0) {
@@ -354,7 +355,7 @@ private fun BudgetGlanceItem(row: BudgetGlanceRow) {
         "${formatMinorUnitsAsInr(row.spentMinor)} of ${formatMinorUnitsAsInr(row.limitMinor)} · over by ${formatMinorUnitsAsInr(-remainingMinor)}"
     }
 
-    DashboardCard {
+    DashboardCard(modifier = modifier) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CategoryBadge(row.category, size = 20.dp)

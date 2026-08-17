@@ -19,6 +19,9 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 
 /**
  * A row in the transactions list. A transfer between the user's own accounts is one event with two
@@ -49,6 +52,9 @@ sealed interface TransactionListItem {
     }
 }
 
+/** One day's worth of rows, oldest-groups-last since [TransactionsViewModel.listItems] is already sorted that way. */
+data class TransactionsDayGroup(val date: LocalDate, val items: List<TransactionListItem>)
+
 class TransactionsViewModel(
     private val transactionRepository: TransactionRepository,
     categoryRepository: CategoryRepository,
@@ -70,6 +76,15 @@ class TransactionsViewModel(
                 )
             }
             (singles.map { TransactionListItem.Single(it) } + transfers).sortedByDescending { it.sortKey }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** [listItems], grouped one date header per day instead of repeating the date on every row. */
+    val groupedItems: StateFlow<List<TransactionsDayGroup>> = listItems
+        .map { items ->
+            val zone = TimeZone.currentSystemDefault()
+            items.groupBy { it.sortKey.toLocalDateTime(zone).date }
+                .map { (date, group) -> TransactionsDayGroup(date, group) }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
