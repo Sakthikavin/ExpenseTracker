@@ -403,19 +403,23 @@ fun CategoryDeltaRow(row: CategorySpendRow, deltaPercent: Float?) {
             row.category?.name ?: "Unassigned",
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
+            color = DashboardPalette.TextPrimary,
             modifier = Modifier.weight(1f),
         )
         Text(
             text = "%.1f%%".format(row.percentage),
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = DashboardPalette.TextSecondary,
             modifier = Modifier.width(46.dp),
         )
         Text(
             text = formatMinorUnitsAsInr(row.totalMinor),
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.width(84.dp),
+            color = DashboardPalette.TextPrimary,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.width(100.dp),
         )
         Text(
             text = if (deltaPercent == null) "—" else "${if (deltaPercent >= 0) "▲" else "▼"} ${kotlin.math.abs(deltaPercent).let { kotlin.math.round(it).toInt() }}%",
