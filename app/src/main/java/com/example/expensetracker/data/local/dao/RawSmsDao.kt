@@ -24,4 +24,16 @@ interface RawSmsDao {
 
     @Update
     suspend fun update(rawSms: RawSmsEntity)
+
+    /**
+     * An earlier message from the same sender with byte-identical text, already linked to a
+     * transaction — the signature of a genuine resend (bank redelivery, a rerun seed script) that
+     * arrived with a different [receivedAt][com.example.expensetracker.data.local.entity.RawSmsEntity.receivedAt]
+     * and so wasn't caught by the (sender, body, receivedAt) unique index.
+     */
+    @Query(
+        "SELECT * FROM raw_sms WHERE sender = :sender AND body = :body " +
+            "AND linkedTransactionId IS NOT NULL AND id != :excludingId LIMIT 1",
+    )
+    suspend fun findLinkedBySenderAndBody(sender: String, body: String, excludingId: Long): RawSmsEntity?
 }

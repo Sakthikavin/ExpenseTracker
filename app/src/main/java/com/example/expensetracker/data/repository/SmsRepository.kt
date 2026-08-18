@@ -44,7 +44,7 @@ class SmsRepository(
 
                 // Two SMS can describe one movement of money — a debit alert and the transfer
                 // confirmation that follows it. Recording both would double-count the payment.
-                reconcileWithExisting(outcome.parsed, body, receivedAt)?.let { existing ->
+                reconcileWithExisting(outcome.parsed, sender, body, receivedAt, rawSmsId)?.let { existing ->
                     rawSmsDao.update(
                         RawSmsEntity(
                             id = rawSmsId,
@@ -160,10 +160,14 @@ class SmsRepository(
      */
     private suspend fun reconcileWithExisting(
         parsed: ParsedSms,
+        sender: String,
         body: String,
         receivedAt: Instant,
+        rawSmsId: Long,
     ): Long? {
-        val existing = findByReference(parsed) ?: findTransferCounterpart(parsed, body, receivedAt)
+        val existing = findByReference(parsed)
+            ?: findTransferCounterpart(parsed, body, receivedAt)
+            ?: findExactBodyResend(sender, body, rawSmsId)
         existing ?: return null
 
         // Two named accounts that differ mean two real legs — money left one and arrived in the
@@ -235,6 +239,19 @@ class SmsRepository(
             dayStart = day.atStartOfDayIn(zone),
             dayEnd = day.plus(1, DateTimeUnit.DAY).atStartOfDayIn(zone),
         )
+    }
+
+    /**
+     * A byte-identical resend of a message already ingested — a bank redelivering a message that
+     * originally failed, or (in testing) a rerun seed script — has nothing distinguishing it from
+     * the original when the parser couldn't extract a reference number to match on. Matching on the
+     * literal message text, not just amount/merchant/direction, keeps this narrow: two genuinely
+     * separate same-day purchases at the same merchant for the same amount carry different message
+     * text (different running balances, order IDs, timestamps in the body) and won't collide here.
+     */
+    private suspend fun findExactBodyResend(sender: String, body: String, rawSmsId: Long): TransactionEntity? {
+        val prior = rawSmsDao.findLinkedBySenderAndBody(sender, body, excludingId = rawSmsId) ?: return null
+        return prior.linkedTransactionId?.let { transactionRepository.getById(it) }
     }
 
     /**

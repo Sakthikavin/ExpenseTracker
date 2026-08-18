@@ -375,6 +375,23 @@ class SmsRepositoryTest {
         assertTrue("both must remain paired", transactions.all { it.transferGroupId != null })
     }
 
+    /**
+     * A plain resend — the same message arriving twice with a different `receivedAt`, no bank
+     * transfer-confirmation wording, and no reference number the parser could extract — must still
+     * not be counted twice. Real senders redeliver failed messages; a rerun seed script does the
+     * same in testing. `findByReference` has nothing to match on here (no `referenceId` was
+     * parsed), so this only works via matching the literal message text against a prior ingest.
+     */
+    @Test
+    fun resendingAnOrdinaryMessageWithNoExtractableReferenceDoesNotDuplicate() = runBlocking {
+        val body = "Rs 450.00 debited to SWIGGY on 16-08-26. Ref 778801. -HDFC Bank"
+        repository.ingest("HDFCBK", body, Instant.fromEpochMilliseconds(1_785_657_168_000))
+        repository.ingest("HDFCBK", body, Instant.fromEpochMilliseconds(1_785_657_368_000))
+
+        val transactions = db.transactionDao().observeAll().first()
+        assertEquals("a plain resend must not create a second transaction", 1, transactions.size)
+    }
+
     /** Confirming a queued message must teach a pattern that the *next* message can use. */
     @Test
     fun confirmingAReviewTeachesAPatternThatParsesTheNextMessage() = runBlocking {
