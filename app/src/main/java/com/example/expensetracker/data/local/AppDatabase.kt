@@ -139,20 +139,24 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // Colours are the validated 8-slot categorical palette from UX_REDESIGN_PLAN.md, assigned
+        // by category identity (slot order: Bills & Utilities, Investments, Unassigned, Groceries,
+        // Entertainment, Health, Food & Dining, Transport). Categories beyond that table cycle back
+        // starting at slot 1, paired with their own distinct icon so hue is never the sole signal.
         val DEFAULT_CATEGORIES: List<CategoryEntity> = listOf(
-            CategoryEntity(name = "Food & Dining", icon = "restaurant", colour = 0xFFFF7043L),
-            CategoryEntity(name = "Groceries", icon = "grocery", colour = 0xFF8BC34AL),
-            CategoryEntity(name = "Transport", icon = "directions_car", colour = 0xFF42A5F5L),
-            CategoryEntity(name = "Shopping", icon = "shopping_cart", colour = 0xFFAB47BCL),
-            CategoryEntity(name = "Bills & Utilities", icon = "receipt", colour = 0xFFFFCA28L),
-            CategoryEntity(name = "Entertainment", icon = "movie", colour = 0xFFEC407AL),
-            CategoryEntity(name = "Health", icon = "local_hospital", colour = 0xFFEF5350L),
-            CategoryEntity(name = "Rent & Housing", icon = "home", colour = 0xFF26A69AL),
-            CategoryEntity(name = "Investments", icon = "trending_up", colour = 0xFF5C6BC0L),
+            CategoryEntity(name = "Food & Dining", icon = "restaurant", colour = 0xFF4A3AA7L),
+            CategoryEntity(name = "Groceries", icon = "grocery", colour = 0xFFEDA100L),
+            CategoryEntity(name = "Transport", icon = "directions_car", colour = 0xFFE34948L),
+            CategoryEntity(name = "Shopping", icon = "shopping_cart", colour = 0xFF2A78D6L), // cycled
+            CategoryEntity(name = "Bills & Utilities", icon = "receipt", colour = 0xFF2A78D6L),
+            CategoryEntity(name = "Entertainment", icon = "movie", colour = 0xFFE87BA4L),
+            CategoryEntity(name = "Health", icon = "local_hospital", colour = 0xFF008300L),
+            CategoryEntity(name = "Rent & Housing", icon = "home", colour = 0xFFEB6834L), // cycled
+            CategoryEntity(name = "Investments", icon = "trending_up", colour = 0xFFEB6834L),
             // Money moved between your own accounts rather than spent — an NPS contribution, a
             // self-transfer. Deliberately neutral in colour so it reads as "not really spend".
             CategoryEntity(name = "Transfers", icon = "swap_horiz", colour = 0xFF78909CL),
-            CategoryEntity(name = "Salary", icon = "attach_money", colour = 0xFF66BB6AL, isIncome = true),
+            CategoryEntity(name = "Salary", icon = "attach_money", colour = 0xFF1BAF7AL, isIncome = true), // cycled
         )
     }
 
