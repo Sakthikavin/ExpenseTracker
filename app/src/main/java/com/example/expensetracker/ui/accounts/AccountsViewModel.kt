@@ -14,6 +14,8 @@ import kotlinx.coroutines.launch
 data class AccountRow(
     val label: String,
     val owned: OwnAccountEntity?,
+    /** True when this label has actually appeared on a transaction, not just a manual claim. */
+    val hasTransactionHistory: Boolean,
 ) {
     val isOwned: Boolean get() = owned != null
     val displayName: String get() = owned?.displayName ?: label
@@ -30,7 +32,9 @@ class AccountsViewModel(private val transferRepository: TransferRepository) : Vi
         transferRepository.observeOwnAccounts(),
     ) { seen, owned ->
         val byLabel = owned.associateBy { it.label }
-        (seen + owned.map { it.label }).distinct().sorted().map { AccountRow(it, byLabel[it]) }
+        val seenSet = seen.toSet()
+        (seen + owned.map { it.label }).distinct().sorted()
+            .map { AccountRow(it, byLabel[it], hasTransactionHistory = it in seenSet) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun setOwned(label: String, owned: Boolean) {
@@ -41,5 +45,10 @@ class AccountsViewModel(private val transferRepository: TransferRepository) : Vi
 
     fun rename(account: OwnAccountEntity, nickname: String) {
         viewModelScope.launch { transferRepository.renameAccount(account, nickname) }
+    }
+
+    /** Drops a claimed label entirely, so a garbage or wrongly-claimed label stops being offered. */
+    fun delete(label: String) {
+        viewModelScope.launch { transferRepository.releaseAccount(label) }
     }
 }
