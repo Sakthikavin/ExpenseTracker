@@ -53,24 +53,36 @@ object SmsDateParser {
         }.getOrNull()
     }
 
-    /** @return the date and the index just past it, so a trailing clock time can be located. */
+    /**
+     * @return the date and the index just past it, so a trailing clock time can be located.
+     *
+     * Considers a match from every pattern and keeps whichever starts earliest in [body], rather
+     * than favouring one pattern type over another regardless of position. Card alerts routinely
+     * trail the real transaction date with an unrelated ISO-shaped one — "Convert to EMI before
+     * 2026-01-15" after "...on 15-Dec-25" — and trying ISO_DATE across the whole body first would
+     * pick that later, unrelated date over the real one right after the amount.
+     */
     private fun findDate(body: String): Pair<LocalDate, Int>? {
-        ISO_DATE.find(body)?.let { m ->
-            val (y, mo, d) = m.destructured
-            localDate(y.toInt(), mo.toInt(), d.toInt())?.let { return it to m.range.last + 1 }
-        }
-        NAMED_MONTH_DATE.find(body)?.let { m ->
-            val (d, monthName, y) = m.destructured
-            val month = MONTHS.indexOf(monthName.lowercase()) + 1
-            if (month > 0) {
-                localDate(expandYear(y.toInt()), month, d.toInt())?.let { return it to m.range.last + 1 }
-            }
-        }
-        NUMERIC_DATE.find(body)?.let { m ->
-            val (d, mo, y) = m.destructured
-            localDate(expandYear(y.toInt()), mo.toInt(), d.toInt())?.let { return it to m.range.last + 1 }
-        }
-        return null
+        val candidates = listOfNotNull(
+            ISO_DATE.find(body)?.let { m ->
+                val (y, mo, d) = m.destructured
+                localDate(y.toInt(), mo.toInt(), d.toInt())?.let { m.range.first to (it to m.range.last + 1) }
+            },
+            NAMED_MONTH_DATE.find(body)?.let { m ->
+                val (d, monthName, y) = m.destructured
+                val month = MONTHS.indexOf(monthName.lowercase()) + 1
+                if (month > 0) {
+                    localDate(expandYear(y.toInt()), month, d.toInt())?.let { m.range.first to (it to m.range.last + 1) }
+                } else {
+                    null
+                }
+            },
+            NUMERIC_DATE.find(body)?.let { m ->
+                val (d, mo, y) = m.destructured
+                localDate(expandYear(y.toInt()), mo.toInt(), d.toInt())?.let { m.range.first to (it to m.range.last + 1) }
+            },
+        )
+        return candidates.minByOrNull { it.first }?.second
     }
 
     /**

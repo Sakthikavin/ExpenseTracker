@@ -69,4 +69,10 @@ class BudgetsViewModel(
             )
         }
     }
+
+    fun removeBudget(categoryId: Long) {
+        viewModelScope.launch {
+            budgetRepository.getForCategory(categoryId)?.let { budgetRepository.delete(it.id) }
+        }
+    }
 }

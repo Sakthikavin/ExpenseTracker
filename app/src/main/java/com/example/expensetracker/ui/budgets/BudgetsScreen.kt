@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -16,6 +17,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -97,6 +99,10 @@ fun BudgetsScreen() {
                 viewModel.setBudget(row.category.id, minor)
                 editing = null
             },
+            onRemove = {
+                viewModel.removeBudget(row.category.id)
+                editing = null
+            },
         )
     }
 }
@@ -141,7 +147,7 @@ private fun NoBudgetRow(row: BudgetRow, onClick: () -> Unit) {
 }
 
 @Composable
-private fun EditBudgetDialog(row: BudgetRow, onDismiss: () -> Unit, onSave: (Long) -> Unit) {
+private fun EditBudgetDialog(row: BudgetRow, onDismiss: () -> Unit, onSave: (Long) -> Unit, onRemove: () -> Unit) {
     var text by remember {
         mutableStateOf(row.budget?.monthlyLimitMinor?.let { (it / 100.0).toString() } ?: "")
     }
@@ -149,12 +155,19 @@ private fun EditBudgetDialog(row: BudgetRow, onDismiss: () -> Unit, onSave: (Lon
         onDismissRequest = onDismiss,
         title = { Text("Monthly budget for ${row.category.name}") },
         text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                label = { Text("Limit (₹)") },
-                placeholder = { Text("e.g. 5000") },
-            )
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Limit (₹)") },
+                    placeholder = { Text("e.g. 5000") },
+                )
+                if (row.budget != null) {
+                    TextButton(onClick = onRemove) {
+                        Text("Remove budget", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
         },
         confirmButton = {
             Button(onClick = { parseInrInputToMinorUnits(text)?.let(onSave) }) { Text("Save") }

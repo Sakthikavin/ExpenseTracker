@@ -69,4 +69,30 @@ class SmsDateParserTest {
     fun `is not fooled by a long reference number`() {
         assertNull(SmsDateParser.parse("Ref 621312687340 for Rs 10", zone))
     }
+
+    /**
+     * A card alert stating the real purchase date in named-month form often trails it with an
+     * unrelated ISO-shaped date for an EMI or cashback offer, which usually lands in the following
+     * January. Trying ISO_DATE across the whole body first — regardless of where each pattern
+     * actually matches — picked that later, unrelated date over the real one right after the
+     * amount, which is exactly how a December purchase turned into a January-next-year one.
+     */
+    @Test
+    fun `prefers the transaction date over a later unrelated EMI offer date`() =
+        assertParsed(
+            "Purchase of Rs 2999.00 on your HDFC Card XX12 at AMAZON on 15-Dec-25. " +
+                "Convert to No-Cost EMI before 2026-01-15 to save more!",
+            2025,
+            12,
+            15,
+        )
+
+    @Test
+    fun `prefers the transaction date over a later unrelated cashback credit date`() =
+        assertParsed(
+            "Rs 1500 debited to FLIPKART on 20-Dec-25. Cashback of Rs 50 credits by 2026-01-05.",
+            2025,
+            12,
+            20,
+        )
 }
