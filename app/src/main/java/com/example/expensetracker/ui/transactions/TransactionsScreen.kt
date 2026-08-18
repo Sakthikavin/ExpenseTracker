@@ -2,6 +2,8 @@
 
 package com.example.expensetracker.ui.transactions
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,11 +12,18 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Circle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -40,6 +49,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.expensetracker.data.local.entity.CategoryEntity
 import com.example.expensetracker.data.local.entity.Direction
@@ -50,23 +61,33 @@ import com.example.expensetracker.ui.common.CategoryLabel
 import com.example.expensetracker.ui.common.LocalAppContainer
 import com.example.expensetracker.ui.common.appViewModel
 import com.example.expensetracker.ui.common.formatDate
+import com.example.expensetracker.ui.common.formatDateRange
 import com.example.expensetracker.ui.common.formatMinorUnitsAsInr
 import com.example.expensetracker.ui.dashboard.DashboardPalette
 import kotlinx.datetime.LocalDate
 
+private val FilterChipBg = Color(0xFFE7EFFB)
+private val FilterChipBorder = Color(0xFFBCD4F2)
+private val FilterChipDot = Color(0xFFCFE0F7)
+
 @Composable
-fun TransactionsScreen() {
+fun TransactionsScreen(
+    filter: TransactionFilter = TransactionFilter(),
+    onClearFilter: () -> Unit = {},
+) {
     val container = LocalAppContainer.current
     val viewModel = appViewModel {
         TransactionsViewModel(
             container.transactionRepository,
             container.categoryRepository,
             container.transferRepository,
+            filter,
         )
     }
     val groupedItems by viewModel.groupedItems.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val ownAccounts by viewModel.ownAccounts.collectAsState()
+    val filterSummary by viewModel.filterSummary.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<TransactionEntity?>(null) }
     var pendingTransferFor by remember { mutableStateOf<TransactionEntity?>(null) }
@@ -78,11 +99,17 @@ fun TransactionsScreen() {
             }
         },
     ) { padding ->
-        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+            if (filter.isActive) {
+                ActiveFilterChip(filter = filter, categories = categories, summary = filterSummary, onClear = onClearFilter)
+            }
             if (groupedItems.isEmpty()) {
-                Text("No transactions yet.", modifier = Modifier.padding(16.dp))
+                Text(
+                    if (filter.isActive) "No transactions match this filter." else "No transactions yet.",
+                    modifier = Modifier.padding(16.dp),
+                )
             } else {
-                LazyColumn {
+                LazyColumn(modifier = Modifier.weight(1f)) {
                     groupedItems.forEach { group ->
                         item(key = "header-${group.date}") { DayHeader(group.date) }
                         items(group.items, key = { it.rowKey }) { item ->
@@ -162,6 +189,80 @@ fun TransactionsScreen() {
                 )
                 showAddDialog = false
             },
+        )
+    }
+}
+
+/** Shows what the list is narrowed to and carries the date range along, so it's obvious the list
+ * isn't showing everything; tapping the ✕ clears back to the unfiltered list. */
+@Composable
+private fun ActiveFilterChip(
+    filter: TransactionFilter,
+    categories: List<CategoryEntity>,
+    summary: FilterSummary,
+    onClear: () -> Unit,
+) {
+    val label = when {
+        filter.direction == Direction.CREDIT -> "Income"
+        filter.direction == Direction.DEBIT -> "Expense"
+        filter.categoryId == TransactionFilter.UNASSIGNED_CATEGORY_ID -> "Unassigned"
+        filter.categoryId != null -> categories.firstOrNull { it.id == filter.categoryId }?.name ?: "Category"
+        else -> "Filtered"
+    }
+    val rangeSuffix = if (filter.startDate != null && filter.endDate != null) {
+        " · ${formatDateRange(filter.startDate, filter.endDate)}"
+    } else {
+        ""
+    }
+    val isCategoryFilter = filter.categoryId != null
+
+    Column(modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)) {
+        Row(
+            modifier = Modifier
+                .wrapContentWidth()
+                .background(FilterChipBg, RoundedCornerShape(20.dp))
+                .border(1.dp, FilterChipBorder, RoundedCornerShape(20.dp))
+                .padding(start = 12.dp, top = 6.dp, bottom = 6.dp, end = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                imageVector = when (filter.direction) {
+                    Direction.CREDIT -> Icons.Filled.ArrowUpward
+                    Direction.DEBIT -> Icons.Filled.ArrowDownward
+                    null -> Icons.Filled.Circle
+                },
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(14.dp),
+            )
+            Text(
+                "$label$rangeSuffix",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .background(FilterChipDot, CircleShape)
+                    .clickable(onClick = onClear),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Clear filter",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(12.dp),
+                )
+            }
+        }
+        Text(
+            text = "${summary.count} transaction${if (summary.count == 1) "" else "s"}" +
+                if (isCategoryFilter) " · ${formatMinorUnitsAsInr(summary.totalMinor)} total" else "",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 6.dp, start = 4.dp),
         )
     }
 }

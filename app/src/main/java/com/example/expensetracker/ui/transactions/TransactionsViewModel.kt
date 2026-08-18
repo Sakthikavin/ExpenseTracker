@@ -55,17 +55,62 @@ sealed interface TransactionListItem {
 /** One day's worth of rows, oldest-groups-last since [TransactionsViewModel.listItems] is already sorted that way. */
 data class TransactionsDayGroup(val date: LocalDate, val items: List<TransactionListItem>)
 
+/**
+ * What the list is narrowed to, carried in from a click-through on the Dashboard. All filters are
+ * optional and combine with AND. [categoryId] uses [UNASSIGNED_CATEGORY_ID] to mean "unassigned
+ * specifically" — a transaction's own `categoryId == null` already means unassigned, so filtering
+ * needs a value that isn't null to say the same thing.
+ */
+data class TransactionFilter(
+    val direction: Direction? = null,
+    val categoryId: Long? = null,
+    val startDate: LocalDate? = null,
+    val endDate: LocalDate? = null,
+) {
+    val isActive: Boolean get() = direction != null || categoryId != null || startDate != null || endDate != null
+
+    companion object {
+        const val UNASSIGNED_CATEGORY_ID = -1L
+    }
+}
+
+data class FilterSummary(val count: Int, val totalMinor: Long)
+
+private fun matchesFilter(transaction: TransactionEntity, filter: TransactionFilter, zone: TimeZone): Boolean {
+    if (filter.direction != null && transaction.direction != filter.direction) return false
+    when (filter.categoryId) {
+        null -> Unit
+        TransactionFilter.UNASSIGNED_CATEGORY_ID -> if (transaction.categoryId != null) return false
+        else -> if (transaction.categoryId != filter.categoryId) return false
+    }
+    val date = transaction.occurredAt.toLocalDateTime(zone).date
+    if (filter.startDate != null && date < filter.startDate) return false
+    if (filter.endDate != null && date > filter.endDate) return false
+    return true
+}
+
 class TransactionsViewModel(
     private val transactionRepository: TransactionRepository,
     categoryRepository: CategoryRepository,
     private val transferRepository: TransferRepository? = null,
+    val filter: TransactionFilter = TransactionFilter(),
 ) : ViewModel() {
 
     val transactions: StateFlow<List<TransactionEntity>> = transactionRepository.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    private val filteredTransactions = transactionRepository.observeAll()
+        .map { all ->
+            val zone = TimeZone.currentSystemDefault()
+            all.filter { matchesFilter(it, filter, zone) }
+        }
+
+    val filterSummary: StateFlow<FilterSummary> = filteredTransactions
+        .map { FilterSummary(count = it.size, totalMinor = it.sumOf { t -> t.amountMinor }) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FilterSummary(0, 0))
+
     /** The list as displayed: transfers folded into one row, everything else untouched. */
-    val listItems: StateFlow<List<TransactionListItem>> = transactionRepository.observeAll()
+    val listItems: StateFlow<List<TransactionListItem>> = filteredTransactions
         .map { all ->
             val (transferLegs, singles) = all.partition { it.transferGroupId != null }
             val transfers = transferLegs.groupBy { it.transferGroupId!! }.map { (groupId, legs) ->

@@ -6,7 +6,7 @@ install it on your phone.
 ## 1. Build the APK on the Mac
 
 From the project root:
-
+    
 ```bash
 export ANDROID_HOME="$HOME/Library/Android/sdk"
 ./gradlew :app:assembleDebug

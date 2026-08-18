@@ -19,10 +19,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import com.example.expensetracker.data.local.entity.Direction
 import com.example.expensetracker.ui.accounts.AccountsScreen
 import com.example.expensetracker.ui.bills.BillsScreen
 import com.example.expensetracker.ui.budgets.BudgetsScreen
@@ -32,7 +35,9 @@ import com.example.expensetracker.ui.common.appViewModel
 import com.example.expensetracker.ui.dashboard.DashboardScreen
 import com.example.expensetracker.ui.review.ReviewQueueScreen
 import com.example.expensetracker.ui.settings.SettingsScreen
+import com.example.expensetracker.ui.transactions.TransactionFilter
 import com.example.expensetracker.ui.transactions.TransactionsScreen
+import kotlinx.datetime.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -77,7 +82,7 @@ fun ExpenseTrackerNavGraph() {
                             val startId = navController.graph.findStartDestination().id
                             navController.popBackStack(startId, inclusive = false)
                             if (destination.route != Destination.Dashboard.route) {
-                                navController.navigate(destination.route) { launchSingleTop = true }
+                                navController.navigate(destination.baseRoute) { launchSingleTop = true }
                             }
                         },
                         icon = {
@@ -109,10 +114,42 @@ fun ExpenseTrackerNavGraph() {
                 DashboardScreen(
                     onNavigateToReview = { navigateFromDashboard(Destination.Review.route) },
                     onNavigateToBudgets = { navigateFromDashboard(Destination.Budgets.route) },
-                    onNavigateToTransactions = { navigateFromDashboard(Destination.Transactions.route) },
+                    onNavigateToTransactions = { direction, categoryId, startDate, endDate ->
+                        navigateFromDashboard(
+                            Destination.Transactions.filteredRoute(
+                                direction = direction,
+                                categoryId = categoryId,
+                                startDate = startDate,
+                                endDate = endDate,
+                            ),
+                        )
+                    },
                 )
             }
-            composable(Destination.Transactions.route) { TransactionsScreen() }
+            composable(
+                route = Destination.Transactions.route,
+                arguments = listOf(
+                    navArgument(Destination.ARG_DIRECTION) { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument(Destination.ARG_CATEGORY_ID) { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument(Destination.ARG_START_DATE) { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument(Destination.ARG_END_DATE) { type = NavType.StringType; nullable = true; defaultValue = null },
+                ),
+            ) { backStackEntry ->
+                val args = backStackEntry.arguments
+                val filter = TransactionFilter(
+                    direction = args?.getString(Destination.ARG_DIRECTION)
+                        ?.let { runCatching { Direction.valueOf(it) }.getOrNull() },
+                    categoryId = args?.getString(Destination.ARG_CATEGORY_ID)?.toLongOrNull(),
+                    startDate = args?.getString(Destination.ARG_START_DATE)
+                        ?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
+                    endDate = args?.getString(Destination.ARG_END_DATE)
+                        ?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
+                )
+                TransactionsScreen(
+                    filter = filter,
+                    onClearFilter = { navigateFromDashboard(Destination.Transactions.baseRoute) },
+                )
+            }
             composable(Destination.Review.route) { ReviewQueueScreen() }
             composable(Destination.Budgets.route) { BudgetsScreen() }
             composable(Destination.Bills.route) { BillsScreen() }

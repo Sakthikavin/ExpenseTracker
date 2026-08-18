@@ -313,7 +313,7 @@ fun ReviewBanner(count: Int, onClick: () -> Unit) {
 // ---------- 5: budgets at a glance ----------
 
 @Composable
-fun BudgetGlanceSection(rows: List<BudgetGlanceRow>, onSeeAll: () -> Unit) {
+fun BudgetGlanceSection(rows: List<BudgetGlanceRow>, onSeeAll: () -> Unit, onRowClick: (BudgetGlanceRow) -> Unit = {}) {
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -331,7 +331,7 @@ fun BudgetGlanceSection(rows: List<BudgetGlanceRow>, onSeeAll: () -> Unit) {
         }
         Spacer(modifier = Modifier.height(10.dp))
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            rows.forEach { row -> BudgetGlanceItem(row) }
+            rows.forEach { row -> BudgetGlanceItem(row, modifier = Modifier.clickable { onRowClick(row) }) }
         }
     }
 }
@@ -393,9 +393,9 @@ fun BudgetGlanceItem(row: BudgetGlanceRow, modifier: Modifier = Modifier) {
 // ---------- category table row (with vs-last-period delta) ----------
 
 @Composable
-fun CategoryDeltaRow(row: CategorySpendRow, deltaPercent: Float?) {
+fun CategoryDeltaRow(row: CategorySpendRow, deltaPercent: Float?, onClick: () -> Unit = {}) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CategoryBadge(row.category, size = 18.dp)

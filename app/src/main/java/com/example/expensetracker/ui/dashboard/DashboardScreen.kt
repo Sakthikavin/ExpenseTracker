@@ -44,12 +44,14 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import com.example.expensetracker.data.local.entity.Direction
 import com.example.expensetracker.ui.common.AddTransactionDialog
 import com.example.expensetracker.ui.common.CategoryBadge
 import com.example.expensetracker.ui.common.LocalAppContainer
 import com.example.expensetracker.ui.common.appViewModel
 import com.example.expensetracker.ui.common.formatDateRange
 import com.example.expensetracker.ui.common.formatMinorUnitsAsInr
+import com.example.expensetracker.ui.transactions.TransactionFilter
 import kotlinx.datetime.Instant
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
@@ -62,7 +64,7 @@ private enum class SpendByCategoryView { CHART, TABLE }
 fun DashboardScreen(
     onNavigateToReview: () -> Unit,
     onNavigateToBudgets: () -> Unit,
-    onNavigateToTransactions: () -> Unit,
+    onNavigateToTransactions: (direction: Direction?, categoryId: Long?, startDate: LocalDate?, endDate: LocalDate?) -> Unit,
 ) {
     val container = LocalAppContainer.current
     val viewModel = appViewModel {
@@ -121,13 +123,21 @@ fun DashboardScreen(
                         label = "Income",
                         amountMinor = state.incomeMinor,
                         dotColor = DashboardPalette.StatusGood,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable {
+                                onNavigateToTransactions(Direction.CREDIT, null, state.rangeStart, state.rangeEnd)
+                            },
                     )
                     StatTile(
                         label = "Expense",
                         amountMinor = state.expenseMinor,
                         dotColor = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable {
+                                onNavigateToTransactions(Direction.DEBIT, null, state.rangeStart, state.rangeEnd)
+                            },
                     )
                 }
             }
@@ -144,7 +154,13 @@ fun DashboardScreen(
 
             if (state.budgetGlance.isNotEmpty()) {
                 item {
-                    BudgetGlanceSection(rows = state.budgetGlance, onSeeAll = onNavigateToBudgets)
+                    BudgetGlanceSection(
+                        rows = state.budgetGlance,
+                        onSeeAll = onNavigateToBudgets,
+                        onRowClick = { row ->
+                            onNavigateToTransactions(null, row.category.id, state.rangeStart, state.rangeEnd)
+                        },
+                    )
                 }
             }
 
@@ -187,12 +203,16 @@ fun DashboardScreen(
                 items(state.spendByCategory) { row ->
                     CategoryLegendRow(
                         row = row,
-                        onCategorize = onNavigateToTransactions,
+                        onClick = { navigateToTransactionsFor(onNavigateToTransactions, row, state) },
                     )
                 }
             } else {
                 items(state.spendByCategory) { row ->
-                    CategoryDeltaRow(row = row, deltaPercent = state.categoryDeltaPercent[row.category?.id])
+                    CategoryDeltaRow(
+                        row = row,
+                        deltaPercent = state.categoryDeltaPercent[row.category?.id],
+                        onClick = { navigateToTransactionsFor(onNavigateToTransactions, row, state) },
+                    )
                 }
             }
         }
@@ -241,6 +261,23 @@ fun DashboardScreen(
                 showAddDialog = false
             },
         )
+    }
+}
+
+/**
+ * Tapping a named category filters Transactions to it, scoped to the dashboard's current range.
+ * Tapping Unassigned ignores the range — the point is to categorize every uncategorized
+ * transaction there is, not just the ones in the currently viewed period.
+ */
+private fun navigateToTransactionsFor(
+    onNavigateToTransactions: (direction: Direction?, categoryId: Long?, startDate: LocalDate?, endDate: LocalDate?) -> Unit,
+    row: CategorySpendRow,
+    state: DashboardUiState,
+) {
+    if (row.category == null) {
+        onNavigateToTransactions(null, TransactionFilter.UNASSIGNED_CATEGORY_ID, null, null)
+    } else {
+        onNavigateToTransactions(null, row.category.id, state.rangeStart, state.rangeEnd)
     }
 }
 
@@ -340,10 +377,10 @@ private fun CategoryPieChart(rows: List<CategorySpendRow>, totalMinor: Long, mod
 }
 
 @Composable
-private fun CategoryLegendRow(row: CategorySpendRow, onCategorize: () -> Unit) {
+private fun CategoryLegendRow(row: CategorySpendRow, onClick: () -> Unit) {
     val isUnassigned = row.category == null
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -355,7 +392,6 @@ private fun CategoryLegendRow(row: CategorySpendRow, onCategorize: () -> Unit) {
                     "Categorize →",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.clickable(onClick = onCategorize),
                 )
             }
         }
