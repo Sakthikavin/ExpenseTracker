@@ -14,6 +14,9 @@ interface RawSmsDao {
     @Query("SELECT * FROM raw_sms WHERE parseStatus = :status ORDER BY receivedAt DESC")
     fun observeByStatus(status: ParseStatus = ParseStatus.NEEDS_REVIEW): Flow<List<RawSmsEntity>>
 
+    @Query("SELECT * FROM raw_sms WHERE id = :id")
+    suspend fun getById(id: Long): RawSmsEntity?
+
     /**
      * Returns -1 when the unique (sender, body, receivedAt) index rejects the row as a duplicate,
      * which is how [com.example.expensetracker.data.repository.SmsRepository] detects a redelivered

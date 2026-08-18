@@ -10,6 +10,7 @@ import com.example.expensetracker.data.local.entity.TransactionEntity
 import com.example.expensetracker.data.local.entity.TransactionSource
 import com.example.expensetracker.data.repository.BudgetRepository
 import com.example.expensetracker.data.repository.CategoryRepository
+import com.example.expensetracker.data.repository.MerchantCategoryRuleRepository
 import com.example.expensetracker.data.repository.SmsRepository
 import com.example.expensetracker.data.repository.TransactionRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -136,6 +137,7 @@ class DashboardViewModel(
     categoryRepository: CategoryRepository,
     budgetRepository: BudgetRepository,
     smsRepository: SmsRepository,
+    private val merchantCategoryRuleRepository: MerchantCategoryRuleRepository? = null,
 ) : ViewModel() {
 
     private val zone = TimeZone.currentSystemDefault()
@@ -306,6 +308,9 @@ class DashboardViewModel(
         occurredAt: Instant = Clock.System.now(),
     ) {
         viewModelScope.launch {
+            // Same lookup TransactionsViewModel.addManualTransaction applies — an explicit pick is
+            // never overridden, but Unassigned still gets the merchant's learned rule (Addendum 4).
+            val resolvedCategoryId = categoryId ?: merchantCategoryRuleRepository?.categoryForMerchant(merchant)
             transactionRepository.create(
                 TransactionEntity(
                     householdId = LocalIds.DEFAULT_HOUSEHOLD_ID,
@@ -315,7 +320,7 @@ class DashboardViewModel(
                     occurredAt = occurredAt,
                     merchant = merchant,
                     accountLabel = accountLabel,
-                    categoryId = categoryId,
+                    categoryId = resolvedCategoryId,
                     note = note,
                     tags = emptyList(),
                     source = TransactionSource.MANUAL,

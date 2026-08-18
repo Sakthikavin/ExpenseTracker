@@ -135,6 +135,39 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun migrate4To5_addsMerchantCategoryRulesTable() {
+        helper.createDatabase(dbName, 4).use { db ->
+            db.execSQL(
+                "INSERT INTO categories (householdId, name, icon, colour, isIncome) " +
+                    "VALUES (1, 'Groceries', 'grocery', 16737996, 0)",
+            )
+        }
+
+        val db = helper.runMigrationsAndValidate(dbName, 5, true, AppDatabase.MIGRATION_4_5)
+
+        db.execSQL(
+            "INSERT INTO merchant_category_rules (householdId, merchantKey, categoryId, displayName, updatedAt) " +
+                "VALUES (1, 'BIGBASKET', 1, NULL, 1000)",
+        )
+        db.query("SELECT merchantKey, categoryId, displayName FROM merchant_category_rules").use { cursor ->
+            assertEquals(1, cursor.count)
+            cursor.moveToFirst()
+            assertEquals("BIGBASKET", cursor.getString(0))
+            assertEquals(1, cursor.getInt(1))
+            assertTrue("no display name set yet", cursor.isNull(2))
+        }
+
+        // The unique index rejects a second rule for the same merchant.
+        val threw = runCatching {
+            db.execSQL(
+                "INSERT INTO merchant_category_rules (householdId, merchantKey, categoryId, updatedAt) " +
+                    "VALUES (1, 'BIGBASKET', 1, 2000)",
+            )
+        }.isFailure
+        assertTrue("the unique index must reject a duplicate merchantKey", threw)
+    }
+
     /** The path a phone still on the original release actually takes. */
     @Test
     fun migrate1To3_runsBothStepsInOrder() {

@@ -12,6 +12,9 @@ import kotlinx.datetime.Instant
 
 data class CategorySpend(val categoryId: Long?, val totalMinor: Long)
 
+/** One row per distinct normalized merchant — see `merchantKeyOf`. Backs the "N txns" count on the Merchant Rules screen. */
+data class MerchantCount(val merchantKey: String, val count: Int)
+
 @Dao
 interface TransactionDao {
     @Query("SELECT * FROM transactions ORDER BY occurredAt DESC")
@@ -134,6 +137,30 @@ interface TransactionDao {
 
     @Query("UPDATE transactions SET transferGroupId = :groupId WHERE id IN (:ids)")
     suspend fun setTransferGroup(ids: List<Long>, groupId: String?)
+
+    /** Backs the "N txns" count per row on the Merchant Rules screen (Addendum 4). */
+    @Query(
+        """
+        SELECT UPPER(TRIM(merchant)) AS merchantKey, COUNT(*) AS count FROM transactions
+        WHERE merchant != ''
+        GROUP BY UPPER(TRIM(merchant))
+        """,
+    )
+    fun observeMerchantCounts(): Flow<List<MerchantCount>>
+
+    /** The past Unassigned transactions a newly learned rule could retroactively apply to (Addendum 4, decision #1). */
+    @Query("SELECT * FROM transactions WHERE UPPER(TRIM(merchant)) = :merchantKey AND categoryId IS NULL")
+    suspend fun findUnassignedByMerchantKey(merchantKey: String): List<TransactionEntity>
+
+    /** Applies [categoryId] to every still-Unassigned transaction from [merchantKey] — the "Apply to N" action. */
+    @Query(
+        "UPDATE transactions SET categoryId = :categoryId WHERE UPPER(TRIM(merchant)) = :merchantKey AND categoryId IS NULL",
+    )
+    suspend fun applyCategoryToUnassignedByMerchantKey(merchantKey: String, categoryId: Long)
+
+    /** The transaction whose SMS first taught [merchantKey]'s rule — the context shown on the rename sheet (Addendum 5). */
+    @Query("SELECT * FROM transactions WHERE UPPER(TRIM(merchant)) = :merchantKey ORDER BY occurredAt ASC LIMIT 1")
+    suspend fun findEarliestByMerchantKey(merchantKey: String): TransactionEntity?
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(transaction: TransactionEntity): Long

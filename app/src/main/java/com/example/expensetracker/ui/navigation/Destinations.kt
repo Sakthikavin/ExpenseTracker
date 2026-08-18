@@ -53,6 +53,7 @@ sealed class Destination(val route: String, val label: String, val icon: ImageVe
     data object Budgets : Destination("budgets", "Budgets", Icons.Filled.PieChart)
     data object Bills : Destination("bills", "Bills", Icons.Filled.Receipt)
     data object Categories : Destination("categories", "Categories", Icons.Filled.Category)
+    data object MerchantRules : Destination("merchant_rules", "Merchant rules", Icons.AutoMirrored.Filled.List)
     data object Accounts : Destination("accounts", "My accounts", Icons.Filled.AccountBalance)
     data object Settings : Destination("settings", "Settings", Icons.Filled.Settings)
 

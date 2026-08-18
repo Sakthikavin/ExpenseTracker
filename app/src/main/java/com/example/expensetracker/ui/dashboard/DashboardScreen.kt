@@ -73,6 +73,7 @@ fun DashboardScreen(
             container.categoryRepository,
             container.budgetRepository,
             container.smsRepository,
+            container.merchantCategoryRuleRepository,
         )
     }
     val state by viewModel.uiState.collectAsState()

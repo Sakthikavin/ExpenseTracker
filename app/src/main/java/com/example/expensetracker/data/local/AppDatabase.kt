@@ -11,6 +11,7 @@ import com.example.expensetracker.data.local.dao.BillDao
 import com.example.expensetracker.data.local.dao.BudgetDao
 import com.example.expensetracker.data.local.dao.CategoryDao
 import com.example.expensetracker.data.local.dao.LearnedPatternDao
+import com.example.expensetracker.data.local.dao.MerchantCategoryRuleDao
 import com.example.expensetracker.data.local.dao.OwnAccountDao
 import com.example.expensetracker.data.local.dao.RawSmsDao
 import com.example.expensetracker.data.local.dao.TransactionDao
@@ -18,6 +19,7 @@ import com.example.expensetracker.data.local.entity.BillEntity
 import com.example.expensetracker.data.local.entity.BudgetEntity
 import com.example.expensetracker.data.local.entity.CategoryEntity
 import com.example.expensetracker.data.local.entity.LearnedPatternEntity
+import com.example.expensetracker.data.local.entity.MerchantCategoryRuleEntity
 import com.example.expensetracker.data.local.entity.OwnAccountEntity
 import com.example.expensetracker.data.local.entity.RawSmsEntity
 import com.example.expensetracker.data.local.entity.TransactionEntity
@@ -36,8 +38,9 @@ import kotlinx.coroutines.launch
         RawSmsEntity::class,
         LearnedPatternEntity::class,
         OwnAccountEntity::class,
+        MerchantCategoryRuleEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -49,6 +52,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun rawSmsDao(): RawSmsDao
     abstract fun learnedPatternDao(): LearnedPatternDao
     abstract fun ownAccountDao(): OwnAccountDao
+    abstract fun merchantCategoryRuleDao(): MerchantCategoryRuleDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -61,7 +65,7 @@ abstract class AppDatabase : RoomDatabase() {
         private fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "expense_tracker.db")
                 .addCallback(SeedCallback(context.applicationContext))
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
 
         /**
@@ -135,6 +139,38 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 db.execSQL(
                     "CREATE UNIQUE INDEX IF NOT EXISTS index_own_accounts_label ON own_accounts (label)",
+                )
+            }
+        }
+
+        /**
+         * v4 → v5: "learn as you categorize" merchant rules (UX_REDESIGN_PLAN.md Addendum 4/5).
+         *
+         * `categoryId`'s foreign key is CASCADE — unlike `transactions.categoryId`'s SET_NULL — a
+         * rule pointing at a deleted category is a dangling pointer with no reason to survive.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS merchant_category_rules (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        householdId INTEGER NOT NULL,
+                        merchantKey TEXT NOT NULL,
+                        categoryId INTEGER NOT NULL,
+                        displayName TEXT,
+                        updatedAt INTEGER NOT NULL,
+                        FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_category_rules_merchantKey " +
+                        "ON merchant_category_rules (merchantKey)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_merchant_category_rules_categoryId " +
+                        "ON merchant_category_rules (categoryId)",
                 )
             }
         }

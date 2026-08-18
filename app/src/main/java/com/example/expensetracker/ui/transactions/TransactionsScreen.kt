@@ -57,6 +57,8 @@ import com.example.expensetracker.data.local.entity.Direction
 import com.example.expensetracker.data.local.entity.OwnAccountEntity
 import com.example.expensetracker.data.local.entity.TransactionEntity
 import com.example.expensetracker.ui.common.AddTransactionDialog
+import com.example.expensetracker.ui.common.CategorizePrompt
+import com.example.expensetracker.ui.common.CategorizePromptBar
 import com.example.expensetracker.ui.common.CategoryLabel
 import com.example.expensetracker.ui.common.LocalAppContainer
 import com.example.expensetracker.ui.common.appViewModel
@@ -82,12 +84,14 @@ fun TransactionsScreen(
             container.categoryRepository,
             container.transferRepository,
             filter,
+            container.merchantCategoryRuleRepository,
         )
     }
     val groupedItems by viewModel.groupedItems.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val ownAccounts by viewModel.ownAccounts.collectAsState()
     val filterSummary by viewModel.filterSummary.collectAsState()
+    val categorizePrompt by viewModel.categorizePrompt.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<TransactionEntity?>(null) }
     var pendingTransferFor by remember { mutableStateOf<TransactionEntity?>(null) }
@@ -99,40 +103,64 @@ fun TransactionsScreen(
             }
         },
     ) { padding ->
-        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-            if (filter.isActive) {
-                ActiveFilterChip(filter = filter, categories = categories, summary = filterSummary, onClear = onClearFilter)
-            }
-            if (groupedItems.isEmpty()) {
-                Text(
-                    if (filter.isActive) "No transactions match this filter." else "No transactions yet.",
-                    modifier = Modifier.padding(16.dp),
-                )
-            } else {
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    groupedItems.forEach { group ->
-                        item(key = "header-${group.date}") { DayHeader(group.date) }
-                        items(group.items, key = { it.rowKey }) { item ->
-                            when (item) {
-                                is TransactionListItem.Single -> TransactionRow(
-                                    transaction = item.transaction,
-                                    category = categories.firstOrNull { it.id == item.transaction.categoryId },
-                                    categories = categories,
-                                    onDelete = { pendingDelete = item.transaction },
-                                    onCategorySelected = { viewModel.updateCategory(item.transaction, it) },
-                                    onMarkTransfer = { pendingTransferFor = item.transaction },
-                                )
+        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                if (filter.isActive) {
+                    ActiveFilterChip(filter = filter, categories = categories, summary = filterSummary, onClear = onClearFilter)
+                }
+                if (groupedItems.isEmpty()) {
+                    Text(
+                        if (filter.isActive) "No transactions match this filter." else "No transactions yet.",
+                        modifier = Modifier.padding(16.dp),
+                    )
+                } else {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        groupedItems.forEach { group ->
+                            item(key = "header-${group.date}") { DayHeader(group.date) }
+                            items(group.items, key = { it.rowKey }) { item ->
+                                when (item) {
+                                    is TransactionListItem.Single -> TransactionRow(
+                                        transaction = item.transaction,
+                                        category = categories.firstOrNull { it.id == item.transaction.categoryId },
+                                        categories = categories,
+                                        onDelete = { pendingDelete = item.transaction },
+                                        onCategorySelected = { viewModel.updateCategory(item.transaction, it) },
+                                        onMarkTransfer = { pendingTransferFor = item.transaction },
+                                    )
 
-                                is TransactionListItem.Transfer -> TransferRow(
-                                    item = item,
-                                    ownAccounts = ownAccounts,
-                                    onUnlink = { viewModel.unlinkTransfer(item.groupId) },
-                                )
+                                    is TransactionListItem.Transfer -> TransferRow(
+                                        item = item,
+                                        ownAccounts = ownAccounts,
+                                        onUnlink = { viewModel.unlinkTransfer(item.groupId) },
+                                    )
+                                }
+                                HorizontalDivider()
                             }
-                            HorizontalDivider()
                         }
                     }
                 }
+            }
+
+            categorizePrompt?.let { prompt ->
+                val categoryId = when (prompt) {
+                    is CategorizePrompt.RetroactiveApply -> prompt.categoryId
+                    is CategorizePrompt.RuleUpdate -> prompt.newCategoryId
+                }
+                CategorizePromptBar(
+                    prompt = prompt,
+                    categoryName = categories.firstOrNull { it.id == categoryId }?.name ?: "Unassigned",
+                    onConfirm = {
+                        when (prompt) {
+                            is CategorizePrompt.RetroactiveApply ->
+                                viewModel.applyRetroactively(prompt)
+                            is CategorizePrompt.RuleUpdate ->
+                                viewModel.confirmRuleUpdate(prompt)
+                        }
+                    },
+                    onDismiss = { viewModel.dismissCategorizePrompt() },
+                    // Extra bottom clearance keeps this off the FAB, which sits in the same corner.
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(start = 16.dp, end = 16.dp, bottom = 88.dp),
+                )
             }
         }
     }

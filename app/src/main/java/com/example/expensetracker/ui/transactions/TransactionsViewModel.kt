@@ -9,10 +9,15 @@ import com.example.expensetracker.data.local.entity.OwnAccountEntity
 import com.example.expensetracker.data.local.entity.TransactionEntity
 import com.example.expensetracker.data.local.entity.TransactionSource
 import com.example.expensetracker.data.repository.CategoryRepository
+import com.example.expensetracker.data.repository.MerchantCategoryRuleRepository
 import com.example.expensetracker.data.repository.TransactionRepository
 import com.example.expensetracker.data.repository.TransferRepository
+import com.example.expensetracker.ui.common.CategorizePrompt
+import com.example.expensetracker.ui.common.toPrompt
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -94,7 +99,13 @@ class TransactionsViewModel(
     categoryRepository: CategoryRepository,
     private val transferRepository: TransferRepository? = null,
     val filter: TransactionFilter = TransactionFilter(),
+    private val merchantCategoryRuleRepository: MerchantCategoryRuleRepository? = null,
 ) : ViewModel() {
+
+    private val _categorizePrompt = MutableStateFlow<CategorizePrompt?>(null)
+
+    /** Addendum 4's retroactive-apply / rule-drift follow-up question, when one is pending. */
+    val categorizePrompt: StateFlow<CategorizePrompt?> = _categorizePrompt.asStateFlow()
 
     val transactions: StateFlow<List<TransactionEntity>> = transactionRepository.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -167,6 +178,10 @@ class TransactionsViewModel(
         occurredAt: Instant = Clock.System.now(),
     ) {
         viewModelScope.launch {
+            // A category the user left as Unassigned still gets the merchant's learned rule
+            // (Addendum 4: "apply the same lookup to manual entries at creation time") — an explicit
+            // pick is never overridden.
+            val resolvedCategoryId = categoryId ?: merchantCategoryRuleRepository?.categoryForMerchant(merchant)
             transactionRepository.create(
                 TransactionEntity(
                     householdId = LocalIds.DEFAULT_HOUSEHOLD_ID,
@@ -176,7 +191,7 @@ class TransactionsViewModel(
                     occurredAt = occurredAt,
                     merchant = merchant,
                     accountLabel = accountLabel,
-                    categoryId = categoryId,
+                    categoryId = resolvedCategoryId,
                     note = note,
                     tags = tags,
                     source = TransactionSource.MANUAL,
@@ -191,7 +206,33 @@ class TransactionsViewModel(
 
     fun updateCategory(transaction: TransactionEntity, categoryId: Long?) {
         viewModelScope.launch {
-            transactionRepository.update(transaction.copy(categoryId = categoryId))
+            val outcome = merchantCategoryRuleRepository?.setCategoryAndLearn(transaction, categoryId)
+            if (outcome == null) {
+                transactionRepository.update(transaction.copy(categoryId = categoryId))
+            } else {
+                _categorizePrompt.value = outcome.toPrompt(transaction.merchant)
+            }
         }
+    }
+
+    /** "Apply to N" on [CategorizePrompt.RetroactiveApply]. */
+    fun applyRetroactively(prompt: CategorizePrompt.RetroactiveApply) {
+        viewModelScope.launch {
+            merchantCategoryRuleRepository?.applyRetroactively(prompt.merchantKey, prompt.categoryId)
+            _categorizePrompt.value = null
+        }
+    }
+
+    /** "Update rule" on [CategorizePrompt.RuleUpdate]. */
+    fun confirmRuleUpdate(prompt: CategorizePrompt.RuleUpdate) {
+        viewModelScope.launch {
+            merchantCategoryRuleRepository?.confirmRuleUpdate(prompt.merchantKey, prompt.newCategoryId)
+            _categorizePrompt.value = null
+        }
+    }
+
+    /** "Not now" / "Keep rule as-is" — the category change already applied, only the rule question is declined. */
+    fun dismissCategorizePrompt() {
+        _categorizePrompt.value = null
     }
 }

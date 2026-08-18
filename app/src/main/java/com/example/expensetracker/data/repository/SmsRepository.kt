@@ -21,6 +21,9 @@ import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 
+/** Which bucket [SmsRepository.ingest] sorted a message into — what the SMS history importer counts. */
+enum class IngestResult { IMPORTED, NEEDS_REVIEW, IGNORED }
+
 class SmsRepository(
     private val rawSmsDao: RawSmsDao,
     private val learnedPatternDao: LearnedPatternDao,
@@ -28,11 +31,17 @@ class SmsRepository(
     private val parser: SmsParser,
     /** Optional so tests can exercise ingestion without the transfer machinery. */
     private val transferRepository: TransferRepository? = null,
+    /** Optional so tests can exercise ingestion without merchant-rule machinery. */
+    private val merchantCategoryRuleRepository: MerchantCategoryRuleRepository? = null,
 ) {
     fun observeNeedsReview(): Flow<List<RawSmsEntity>> = rawSmsDao.observeByStatus(ParseStatus.NEEDS_REVIEW)
 
-    /** Entry point from [com.example.expensetracker.data.sms.SmsReceiver]. */
-    suspend fun ingest(sender: String, body: String, receivedAt: Instant) {
+    /**
+     * Entry point from [com.example.expensetracker.data.sms.SmsReceiver] and from the SMS history
+     * importer. The [IngestResult] tells the caller which bucket this message fell into; the
+     * importer uses it to tally progress, the live receiver ignores it.
+     */
+    suspend fun ingest(sender: String, body: String, receivedAt: Instant): IngestResult {
         when (val outcome = parser.parse(sender, body)) {
             is ParseOutcome.Parsed -> {
                 val rawSmsId = rawSmsDao.insert(
@@ -40,7 +49,7 @@ class SmsRepository(
                 )
                 // -1 means the unique index rejected this as a duplicate broadcast. Returning here
                 // is what stops the same alert being counted as a second transaction.
-                if (rawSmsId == DUPLICATE_ROW_ID) return
+                if (rawSmsId == DUPLICATE_ROW_ID) return IngestResult.IMPORTED
 
                 // Two SMS can describe one movement of money — a debit alert and the transfer
                 // confirmation that follows it. Recording both would double-count the payment.
@@ -55,15 +64,20 @@ class SmsRepository(
                             linkedTransactionId = existing,
                         ),
                     )
-                    return
+                    return IngestResult.IMPORTED
                 }
 
+                // Silent per Addendum 4, decision #3: a transaction from an already-known merchant
+                // is born categorized, no confirmation needed. Pure lookup — never learns, never
+                // prompts; that only happens where a human actually chooses a category.
+                val ruleCategoryId = merchantCategoryRuleRepository?.categoryForMerchant(outcome.parsed.merchant)
                 val transactionId = createTransaction(
                     amountMinor = outcome.parsed.amountMinor,
                     direction = outcome.parsed.direction,
                     merchant = outcome.parsed.merchant,
                     rawSmsId = rawSmsId,
                     occurredAt = outcome.parsed.occurredAt ?: receivedAt,
+                    categoryId = ruleCategoryId,
                     accountLabel = outcome.parsed.accountLabel,
                     referenceId = outcome.parsed.referenceId,
                 )
@@ -83,16 +97,18 @@ class SmsRepository(
                 // Money moved between the user's own accounts produces two legs; pairing them here
                 // keeps both rows while stopping either from counting as spending or income.
                 transferRepository?.tryPair(
-                    transaction = transactionRepository.getById(transactionId) ?: return,
+                    transaction = transactionRepository.getById(transactionId) ?: return IngestResult.IMPORTED,
                     counterpartyAccount = outcome.parsed.counterpartyAccount,
                 )
+                return IngestResult.IMPORTED
             }
             ParseOutcome.NeedsReview -> {
                 rawSmsDao.insert(
                     RawSmsEntity(sender = sender, body = body, receivedAt = receivedAt, parseStatus = ParseStatus.NEEDS_REVIEW),
                 )
+                return IngestResult.NEEDS_REVIEW
             }
-            ParseOutcome.Ignored -> Unit
+            ParseOutcome.Ignored -> return IngestResult.IGNORED
         }
     }
 
@@ -110,7 +126,7 @@ class SmsRepository(
         merchant: String,
         categoryId: Long?,
         accountLabel: String,
-    ) {
+    ): CategorizeOutcome {
         // The message's own date if it has one, else when we received it — never "now", which
         // would date a message confirmed days later to the day it was confirmed.
         val occurredAt = SmsDateParser.parse(rawSms.body) ?: rawSms.receivedAt
@@ -141,6 +157,15 @@ class SmsRepository(
         rawSmsDao.update(rawSms.copy(parseStatus = ParseStatus.PARSED, linkedTransactionId = transactionId))
 
         learnPattern(rawSms, amountMinor, merchant, direction)
+
+        // The category was already written above (as part of create/update), so this is the
+        // learn-only half of Addendum 4's shared function — the transaction-writing half doesn't
+        // apply here since confirmReview does its own create-or-update reconciliation.
+        return if (categoryId != null) {
+            merchantCategoryRuleRepository?.learnFromCategorization(merchant, categoryId) ?: CategorizeOutcome.Applied
+        } else {
+            CategorizeOutcome.Applied
+        }
     }
 
     /** Manual dismissal from the "needs review" queue; creates no transaction. */

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FloatingActionButton
@@ -32,6 +33,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.expensetracker.data.local.entity.CategoryEntity
 import com.example.expensetracker.ui.common.CategoryBadge
@@ -52,10 +55,12 @@ private val PRESET_COLOURS: List<Long> = listOf(
 )
 
 @Composable
-fun CategoriesScreen() {
+fun CategoriesScreen(onNavigateToMerchantRules: () -> Unit = {}) {
     val container = LocalAppContainer.current
-    val viewModel = appViewModel { CategoriesViewModel(container.categoryRepository) }
+    val viewModel = appViewModel { CategoriesViewModel(container.categoryRepository, container.merchantCategoryRuleRepository) }
     val categories by viewModel.categories.collectAsState()
+    val ruleCount by viewModel.ruleCount.collectAsState()
+    val ruleCountForPendingDelete by viewModel.ruleCountForPendingDelete.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<CategoryEntity?>(null) }
 
@@ -68,6 +73,24 @@ fun CategoriesScreen() {
     ) { padding ->
         Box(modifier = Modifier.padding(padding).fillMaxSize()) {
             LazyColumn {
+                item {
+                    ListItem(
+                        modifier = Modifier.clickable(onClick = onNavigateToMerchantRules),
+                        leadingContent = {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(MaterialTheme.colorScheme.primary, CircleShape),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(Icons.Filled.Link, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                            }
+                        },
+                        headlineContent = { Text("Merchant rules", fontWeight = FontWeight.Bold) },
+                        supportingContent = { Text("$ruleCount merchant${if (ruleCount == 1) "" else "s"} auto-categorize on arrival") },
+                    )
+                    HorizontalDivider()
+                }
                 items(categories, key = { it.id }) { category ->
                     ListItem(
                         leadingContent = { CategoryBadge(category, size = 36.dp) },
@@ -86,10 +109,22 @@ fun CategoriesScreen() {
     }
 
     pendingDelete?.let { category ->
+        LaunchedEffect(category.id) { viewModel.loadRuleCountFor(category.id) }
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text("Delete \"${category.name}\"?") },
-            text = { Text("Transactions in this category will become Unassigned. This can't be undone.") },
+            text = {
+                Text(
+                    "Transactions in this category will become Unassigned. This can't be undone." +
+                        if (ruleCountForPendingDelete > 0) {
+                            " $ruleCountForPendingDelete merchant rule" +
+                                (if (ruleCountForPendingDelete == 1) "" else "s") +
+                                " mapped to this category will also be removed."
+                        } else {
+                            ""
+                        },
+                )
+            },
             confirmButton = {
                 Button(onClick = { viewModel.delete(category.id); pendingDelete = null }) { Text("Delete") }
             },

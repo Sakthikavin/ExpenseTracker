@@ -45,6 +45,18 @@ android {
     }
 }
 
+// AGP names the output APK after the module directory ("app") by default, giving app-debug.apk /
+// app-release.apk. Rename it after the app itself instead; release drops the suffix since it's the
+// one that ships.
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        val suffix = if (variant.buildType == "release") "" else "-${variant.buildType}"
+        variant.outputs.forEach { output ->
+            output.outputFileName.set("expense-tracker$suffix.apk")
+        }
+    }
+}
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)

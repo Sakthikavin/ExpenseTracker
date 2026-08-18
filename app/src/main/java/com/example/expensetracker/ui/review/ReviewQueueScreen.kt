@@ -68,6 +68,8 @@ import androidx.compose.ui.unit.dp
 import com.example.expensetracker.data.local.entity.CategoryEntity
 import com.example.expensetracker.data.local.entity.Direction
 import com.example.expensetracker.data.local.entity.RawSmsEntity
+import com.example.expensetracker.ui.common.CategorizePrompt
+import com.example.expensetracker.ui.common.CategorizePromptBar
 import com.example.expensetracker.ui.common.CategoryBadge
 import com.example.expensetracker.ui.common.CategoryLabel
 import com.example.expensetracker.ui.common.LocalAppContainer
@@ -80,9 +82,12 @@ import kotlinx.coroutines.launch
 @Composable
 fun ReviewQueueScreen() {
     val container = LocalAppContainer.current
-    val viewModel = appViewModel { ReviewQueueViewModel(container.smsRepository, container.categoryRepository) }
+    val viewModel = appViewModel {
+        ReviewQueueViewModel(container.smsRepository, container.categoryRepository, container.merchantCategoryRuleRepository)
+    }
     val needsReview by viewModel.needsReview.collectAsState()
     val categories by viewModel.categories.collectAsState()
+    val categorizePrompt by viewModel.categorizePrompt.collectAsState()
     var selected by remember { mutableStateOf<RawSmsEntity?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -127,6 +132,25 @@ fun ReviewQueueScreen() {
                         )
                     }
                 }
+            }
+
+            categorizePrompt?.let { prompt ->
+                val categoryId = when (prompt) {
+                    is CategorizePrompt.RetroactiveApply -> prompt.categoryId
+                    is CategorizePrompt.RuleUpdate -> prompt.newCategoryId
+                }
+                CategorizePromptBar(
+                    prompt = prompt,
+                    categoryName = categories.firstOrNull { it.id == categoryId }?.name ?: "Unassigned",
+                    onConfirm = {
+                        when (prompt) {
+                            is CategorizePrompt.RetroactiveApply -> viewModel.applyRetroactively(prompt)
+                            is CategorizePrompt.RuleUpdate -> viewModel.confirmRuleUpdate(prompt)
+                        }
+                    },
+                    onDismiss = { viewModel.dismissCategorizePrompt() },
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+                )
             }
         }
     }

@@ -33,6 +33,7 @@ import com.example.expensetracker.ui.categories.CategoriesScreen
 import com.example.expensetracker.ui.common.LocalAppContainer
 import com.example.expensetracker.ui.common.appViewModel
 import com.example.expensetracker.ui.dashboard.DashboardScreen
+import com.example.expensetracker.ui.rules.MerchantRulesScreen
 import com.example.expensetracker.ui.review.ReviewQueueScreen
 import com.example.expensetracker.ui.settings.SettingsScreen
 import com.example.expensetracker.ui.transactions.TransactionFilter
@@ -153,9 +154,18 @@ fun ExpenseTrackerNavGraph() {
             composable(Destination.Review.route) { ReviewQueueScreen() }
             composable(Destination.Budgets.route) { BudgetsScreen() }
             composable(Destination.Bills.route) { BillsScreen() }
-            composable(Destination.Categories.route) { CategoriesScreen() }
+            composable(Destination.Categories.route) {
+                CategoriesScreen(
+                    onNavigateToMerchantRules = {
+                        navController.navigate(Destination.MerchantRules.route) { launchSingleTop = true }
+                    },
+                )
+            }
+            composable(Destination.MerchantRules.route) { MerchantRulesScreen() }
             composable(Destination.Accounts.route) { AccountsScreen() }
-            composable(Destination.Settings.route) { SettingsScreen() }
+            composable(Destination.Settings.route) {
+                SettingsScreen(onNavigateToReview = { navigateFromDashboard(Destination.Review.route) })
+            }
         }
     }
 }

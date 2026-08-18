@@ -1,6 +1,7 @@
 package com.example.expensetracker.data.repository
 
 import com.example.expensetracker.data.local.dao.CategorySpend
+import com.example.expensetracker.data.local.dao.MerchantCount
 import com.example.expensetracker.data.local.dao.TransactionDao
 import com.example.expensetracker.data.local.entity.Direction
 import com.example.expensetracker.data.local.entity.TransactionEntity
@@ -56,4 +57,19 @@ class TransactionRepository(private val transactionDao: TransactionDao) {
     suspend fun update(transaction: TransactionEntity) = transactionDao.update(transaction)
 
     suspend fun delete(id: Long) = transactionDao.delete(id)
+
+    /** @see com.example.expensetracker.data.local.dao.TransactionDao.observeMerchantCounts */
+    fun observeMerchantCounts(): Flow<List<MerchantCount>> = transactionDao.observeMerchantCounts()
+
+    /** @see com.example.expensetracker.data.local.dao.TransactionDao.findUnassignedByMerchantKey */
+    suspend fun findUnassignedByMerchantKey(merchantKey: String): List<TransactionEntity> =
+        transactionDao.findUnassignedByMerchantKey(merchantKey)
+
+    /** @see com.example.expensetracker.data.local.dao.TransactionDao.applyCategoryToUnassignedByMerchantKey */
+    suspend fun applyCategoryToUnassignedByMerchantKey(merchantKey: String, categoryId: Long) =
+        transactionDao.applyCategoryToUnassignedByMerchantKey(merchantKey, categoryId)
+
+    /** @see com.example.expensetracker.data.local.dao.TransactionDao.findEarliestByMerchantKey */
+    suspend fun findEarliestByMerchantKey(merchantKey: String): TransactionEntity? =
+        transactionDao.findEarliestByMerchantKey(merchantKey)
 }
