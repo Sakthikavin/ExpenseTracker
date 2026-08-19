@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.expensetracker.data.repository.IngestResult
 import com.example.expensetracker.data.repository.SmsRepository
+import com.example.expensetracker.data.sms.SmsParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -36,9 +37,23 @@ class SettingsViewModel(private val smsRepository: SmsRepository) : ViewModel() 
     private val _lastImportAt = MutableStateFlow<Instant?>(null)
     val lastImportAt: StateFlow<Instant?> = _lastImportAt.asStateFlow()
 
+    private val _ignoreBelowMinor = MutableStateFlow(SmsParser.DEFAULT_IGNORE_BELOW_MINOR)
+    val ignoreBelowMinor: StateFlow<Long> = _ignoreBelowMinor.asStateFlow()
+
     fun loadLastImportAt(prefs: SharedPreferences) {
         val millis = prefs.getLong(PREF_LAST_IMPORT_AT, -1L)
         _lastImportAt.value = millis.takeIf { it >= 0 }?.let(Instant::fromEpochMilliseconds)
+    }
+
+    fun loadIgnoreBelowMinor(prefs: SharedPreferences) {
+        _ignoreBelowMinor.value =
+            prefs.getLong(SmsParser.PREF_IGNORE_BELOW_MINOR, SmsParser.DEFAULT_IGNORE_BELOW_MINOR)
+    }
+
+    /** [minor] is already paise; the screen converts what the user types in rupees. */
+    fun setIgnoreBelowMinor(prefs: SharedPreferences, minor: Long) {
+        prefs.edit { putLong(SmsParser.PREF_IGNORE_BELOW_MINOR, minor) }
+        _ignoreBelowMinor.value = minor
     }
 
     /**

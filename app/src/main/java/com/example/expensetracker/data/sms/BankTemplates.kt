@@ -311,3 +311,39 @@ private val TRANSACTIONAL_KEYWORD_HINT = Regex(
 /** Heuristic for tier 2: looks financial enough to surface for manual review. */
 fun looksFinancial(body: String): Boolean =
     AMOUNT_HINT.containsMatchIn(body) && TRANSACTIONAL_KEYWORD_HINT.containsMatchIn(body)
+
+private val LOOSE_AMOUNT = Regex("""(?i)(?:rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)""")
+
+/**
+ * Loosely reads the first Rs/INR amount mentioned, for the amount-floor filter in [SmsParser] —
+ * this doesn't need [BankTemplate.extract]'s rigor since it only decides whether to surface the
+ * message for review, not what to record.
+ */
+fun looseAmountMinor(body: String): Long? =
+    LOOSE_AMOUNT.find(body)?.groupValues?.get(1)?.let(::parseAmountToMinorUnits)
+
+/**
+ * Mandate reminders, bill-due nudges, and "how to stop this" footers describe money that hasn't
+ * moved yet, but mention an amount and a debit-shaped verb just like a real alert — which is why
+ * [looksFinancial] alone routes them into the review queue. Sender-independent by design: the
+ * mandate notice and the bill reminder come from unrelated senders but share this same future-tense
+ * signature.
+ */
+private val FUTURE_TENSE_HINT = Regex(
+    """(?i)\b(?:will\s+be\s+debited|due\s+for\s+payment|upcoming\s+mandate|to\s+stop\s+execution)\b""",
+)
+
+/**
+ * A confirmation verb found outside the matched future-tense phrase means the message also states a
+ * debit/credit that already happened — e.g. "Last EMI of Rs 500 was debited; next EMI will be
+ * debited on the 5th" is a real transaction, footer or not. The phrase itself is stripped first
+ * because "will be **debited**" would otherwise always self-match.
+ */
+private val CONFIRMATION_VERB = Regex("""(?i)\b(?:$DEBIT_VERB|$CREDIT_VERB)\b""")
+
+/** Tier-2 pre-filter: a future-tense notice with no separate past-tense confirmation is not a transaction. */
+fun looksLikePreNotice(body: String): Boolean {
+    if (!FUTURE_TENSE_HINT.containsMatchIn(body)) return false
+    val remainder = FUTURE_TENSE_HINT.replace(body, " ")
+    return !CONFIRMATION_VERB.containsMatchIn(remainder)
+}

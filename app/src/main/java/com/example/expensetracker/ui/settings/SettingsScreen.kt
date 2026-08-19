@@ -24,6 +24,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -47,6 +48,7 @@ import androidx.core.content.ContextCompat
 import com.example.expensetracker.export.CsvExporter
 import com.example.expensetracker.ui.common.LocalAppContainer
 import com.example.expensetracker.ui.common.appViewModel
+import com.example.expensetracker.ui.common.parseInrInputToMinorUnits
 import com.example.expensetracker.ui.theme.StatusGood
 import com.example.expensetracker.ui.theme.StatusWarning
 import kotlinx.coroutines.flow.first
@@ -62,9 +64,15 @@ fun SettingsScreen(onNavigateToReview: () -> Unit) {
     val settingsViewModel = appViewModel { SettingsViewModel(container.smsRepository) }
     val importProgress by settingsViewModel.importProgress.collectAsState()
     val lastImportAt by settingsViewModel.lastImportAt.collectAsState()
+    val ignoreBelowMinor by settingsViewModel.ignoreBelowMinor.collectAsState()
 
     val prefs = remember { context.getSharedPreferences("settings", Context.MODE_PRIVATE) }
-    LaunchedEffect(Unit) { settingsViewModel.loadLastImportAt(prefs) }
+    LaunchedEffect(Unit) {
+        settingsViewModel.loadLastImportAt(prefs)
+        settingsViewModel.loadIgnoreBelowMinor(prefs)
+    }
+    var ignoreBelowText by remember { mutableStateOf("") }
+    LaunchedEffect(ignoreBelowMinor) { ignoreBelowText = "%.2f".format(ignoreBelowMinor / 100.0) }
 
     var showConfirmDialog by remember { mutableStateOf(false) }
     var permissionDenied by remember { mutableStateOf(false) }
@@ -164,6 +172,46 @@ fun SettingsScreen(onNavigateToReview: () -> Unit) {
                 }
             },
         ) { Text("Export CSV") }
+
+        HorizontalDivider()
+
+        Text(
+            "Noise filters",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "Verification pings (\"Received! INR 1.00…\") never reach the review queue when they're " +
+                "under this amount.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = ignoreBelowText,
+            onValueChange = { text ->
+                ignoreBelowText = text
+                parseInrInputToMinorUnits(text)?.let { settingsViewModel.setIgnoreBelowMinor(prefs, it) }
+            },
+            label = { Text("Ignore transactions under (₹)") },
+            singleLine = true,
+        )
+
+        Text(
+            "One-off cleanup: the review queue has old confirmation-only messages (NPS, mutual fund " +
+                "and tax-payment confirmations) that duplicate a debit already captured elsewhere. " +
+                "New messages like these are filtered automatically; this clears out the backlog.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button(
+            onClick = {
+                scope.launch {
+                    val count = container.smsRepository.ignoreConfirmationOnlyBacklog()
+                    statusMessage = "Moved $count confirmation-only messages out of the review queue."
+                }
+            },
+        ) { Text("Clean up confirmation-only messages") }
 
         statusMessage?.let { Text(it) }
     }

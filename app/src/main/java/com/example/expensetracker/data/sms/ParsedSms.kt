@@ -26,6 +26,16 @@ data class ParsedSms(
 sealed interface ParseOutcome {
     data class Parsed(val parsed: ParsedSms) : ParseOutcome
     data object NeedsReview : ParseOutcome
+
+    /**
+     * Filtered out by a known-noise rule (sender, pre-notice wording, or too small to matter) after
+     * the message otherwise looked financial enough for review. Persisted with
+     * [com.example.expensetracker.data.local.entity.ParseStatus.IGNORED] — the same status a manual
+     * dismissal from the review queue produces — so it stays auditable, just hidden from the queue.
+     */
+    data object IgnoredAsNoise : ParseOutcome
+
+    /** Doesn't look financial at all; never touches raw_sms. */
     data object Ignored : ParseOutcome
 }
 

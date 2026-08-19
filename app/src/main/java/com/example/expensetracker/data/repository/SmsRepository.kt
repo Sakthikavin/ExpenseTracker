@@ -14,6 +14,7 @@ import com.example.expensetracker.data.sms.PatternLearner
 import com.example.expensetracker.data.sms.SmsDateParser
 import com.example.expensetracker.data.sms.SmsParser
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
@@ -108,8 +109,32 @@ class SmsRepository(
                 )
                 return IngestResult.NEEDS_REVIEW
             }
+            // Financial-looking enough to have reached review, but caught by a known-noise rule —
+            // kept for audit (same status a manual dismissal produces), just hidden from the queue.
+            ParseOutcome.IgnoredAsNoise -> {
+                rawSmsDao.insert(
+                    RawSmsEntity(sender = sender, body = body, receivedAt = receivedAt, parseStatus = ParseStatus.IGNORED),
+                )
+                return IngestResult.IGNORED
+            }
+            // Doesn't look financial at all — not worth a row.
             ParseOutcome.Ignored -> return IngestResult.IGNORED
         }
+    }
+
+    /**
+     * One-time cleanup for the review-queue backlog that predates [SmsParser.ALWAYS_IGNORE_SENDERS]:
+     * routes any still-queued row from those senders into IGNORED, exactly like the permanent
+     * parser-level filter now does for new messages. Safe to run more than once — a row already
+     * IGNORED is no longer NEEDS_REVIEW, so a second run has nothing left to match.
+     *
+     * @return how many rows were updated.
+     */
+    suspend fun ignoreConfirmationOnlyBacklog(): Int {
+        val stale = rawSmsDao.observeByStatus(ParseStatus.NEEDS_REVIEW).first()
+            .filter { PatternLearner.normaliseSender(it.sender) in SmsParser.ALWAYS_IGNORE_SENDERS }
+        stale.forEach { rawSmsDao.update(it.copy(parseStatus = ParseStatus.IGNORED)) }
+        return stale.size
     }
 
     /**

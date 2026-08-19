@@ -19,6 +19,7 @@ import com.example.expensetracker.data.sms.SmsParser
  */
 class AppContainer(context: Context) {
     private val database: AppDatabase = AppDatabase.getInstance(context)
+    private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
     val categoryRepository = CategoryRepository(database.categoryDao())
     val transactionRepository = TransactionRepository(database.transactionDao())
@@ -37,7 +38,10 @@ class AppContainer(context: Context) {
         transactionRepository = transactionRepository,
     )
 
-    private val smsParser = SmsParser(database.learnedPatternDao())
+    private val smsParser = SmsParser(
+        learnedPatternDao = database.learnedPatternDao(),
+        ignoreBelowMinor = { prefs.getLong(SmsParser.PREF_IGNORE_BELOW_MINOR, SmsParser.DEFAULT_IGNORE_BELOW_MINOR) },
+    )
     val smsRepository = SmsRepository(
         rawSmsDao = database.rawSmsDao(),
         learnedPatternDao = database.learnedPatternDao(),

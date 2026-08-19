@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.example.expensetracker.data.local.AppDatabase
 import com.example.expensetracker.data.local.entity.Direction
 import com.example.expensetracker.data.local.entity.ParseStatus
+import com.example.expensetracker.data.local.entity.RawSmsEntity
 import com.example.expensetracker.data.sms.SmsParser
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -421,5 +422,128 @@ class SmsRepositoryTest {
             0,
             db.rawSmsDao().observeByStatus(ParseStatus.NEEDS_REVIEW).first().size,
         )
+    }
+
+    // --- permanent noise filters ---
+
+    /** The confirmation-only senders never reach the review queue, but stay in raw_sms for audit. */
+    @Test
+    fun aConfirmationOnlySenderIsIgnoredButKeptForAudit() = runBlocking {
+        val result = repository.ingest(
+            "AD-NPSCRA",
+            "Rs 5000.00 debited towards NPS contribution. Ref 12345.",
+            Instant.fromEpochMilliseconds(1_785_657_168_000),
+        )
+
+        assertEquals(IngestResult.IGNORED, result)
+        assertEquals(0, db.transactionDao().observeAll().first().size)
+        assertEquals(
+            "nothing should reach the review queue",
+            0,
+            db.rawSmsDao().observeByStatus(ParseStatus.NEEDS_REVIEW).first().size,
+        )
+        assertEquals(
+            "the message must still be visible in raw_sms, just under IGNORED",
+            1,
+            db.rawSmsDao().observeByStatus(ParseStatus.IGNORED).first().size,
+        )
+    }
+
+    /** A rotating sender prefix ("AD-", "VM-") must not defeat the normalised-sender match. */
+    @Test
+    fun theConfirmationOnlyFilterSurvivesARotatingSenderPrefix() = runBlocking {
+        val result = repository.ingest(
+            "VM-AXISMF-S",
+            "Rs 2000.00 debited for mutual fund purchase. Ref 998877.",
+            Instant.fromEpochMilliseconds(1_785_657_168_000),
+        )
+
+        assertEquals(IngestResult.IGNORED, result)
+    }
+
+    /** A mandate reminder and a bill-due nudge share no sender, only the future-tense wording. */
+    @Test
+    fun futureTenseMandateAndBillWordingAreIgnoredRegardlessOfSender() = runBlocking {
+        val mandateResult = repository.ingest(
+            "AD-NACHBK",
+            "Your ECS mandate of Rs 999.00 will be debited on 05-09-26. To stop execution, contact your bank.",
+            Instant.fromEpochMilliseconds(1_785_657_168_000),
+        )
+        val billResult = repository.ingest(
+            "VM-CCBILL",
+            "Your credit card bill of Rs 4500.00 is due for payment by 10-09-26.",
+            Instant.fromEpochMilliseconds(1_785_657_268_000),
+        )
+
+        assertEquals("mandate notice", IngestResult.IGNORED, mandateResult)
+        assertEquals("bill reminder", IngestResult.IGNORED, billResult)
+        assertEquals(
+            "neither should reach the review queue",
+            0,
+            db.rawSmsDao().observeByStatus(ParseStatus.NEEDS_REVIEW).first().size,
+        )
+    }
+
+    /** A message that also states a debit already happened must not be swallowed by the tense filter. */
+    @Test
+    fun futureTenseWordingWithAPastTenseConfirmationStillReachesReview() = runBlocking {
+        val result = repository.ingest(
+            "AD-EMIBNK",
+            "Last EMI of Rs 500.00 was debited on 01-08-26. Next EMI of Rs 500.00 will be debited on 01-09-26.",
+            Instant.fromEpochMilliseconds(1_785_657_168_000),
+        )
+
+        assertEquals(IngestResult.NEEDS_REVIEW, result)
+        assertEquals(1, db.rawSmsDao().observeByStatus(ParseStatus.NEEDS_REVIEW).first().size)
+    }
+
+    /** A verification ping under the amount floor is noise; the same shape above it is real. */
+    @Test
+    fun amountsBelowTheIgnoreThresholdAreFilteredButNotOnesAboveIt() = runBlocking {
+        val pingResult = repository.ingest(
+            "AD-HDFCBK",
+            "Received! INR 1.00 in HDFC Bank A/c xx3941",
+            Instant.fromEpochMilliseconds(1_785_657_168_000),
+        )
+        val realResult = repository.ingest(
+            "AD-HDFCBK",
+            "Received! INR 5.00 in HDFC Bank A/c xx3941",
+            Instant.fromEpochMilliseconds(1_785_657_268_000),
+        )
+
+        assertEquals("a ₹1 verification ping is below the default ₹2 floor", IngestResult.IGNORED, pingResult)
+        assertEquals("₹5 clears the floor and still needs review", IngestResult.NEEDS_REVIEW, realResult)
+    }
+
+    // --- one-time backlog cleanup ---
+
+    /** Rows queued before the permanent sender filter existed must be movable in one pass. */
+    @Test
+    fun cleanupMovesExistingBacklogRowsFromNoisySendersOutOfReview() = runBlocking {
+        db.rawSmsDao().insert(
+            RawSmsEntity(
+                sender = "AD-NPSCRA",
+                body = "Rs 5000.00 debited towards NPS contribution. Ref 55555.",
+                receivedAt = Instant.fromEpochMilliseconds(1_785_657_168_000),
+                parseStatus = ParseStatus.NEEDS_REVIEW,
+            ),
+        )
+        db.rawSmsDao().insert(
+            RawSmsEntity(
+                sender = "AD-ICICIB",
+                body = "Purchase of Rs 599.00 on your ICICI Card XX12 at NETFLIX.COM. Avl Lmt Rs 45000",
+                receivedAt = Instant.fromEpochMilliseconds(1_785_657_268_000),
+                parseStatus = ParseStatus.NEEDS_REVIEW,
+            ),
+        )
+
+        val moved = repository.ignoreConfirmationOnlyBacklog()
+
+        assertEquals(1, moved)
+        assertEquals(1, db.rawSmsDao().observeByStatus(ParseStatus.NEEDS_REVIEW).first().size)
+        assertEquals(1, db.rawSmsDao().observeByStatus(ParseStatus.IGNORED).first().size)
+
+        // Safe to run twice: nothing left from those senders to move a second time.
+        assertEquals(0, repository.ignoreConfirmationOnlyBacklog())
     }
 }
