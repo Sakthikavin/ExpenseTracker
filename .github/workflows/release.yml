@@ -1,8 +1,12 @@
 name: Release APK
 
-# Push a tag like "v1.0" to trigger this: builds the debug APK (same
-# variant INSTALL_ON_PHONE.md has you sideload) and attaches it to a
-# GitHub Release for download.
+# Two ways to trigger a release:
+#   - Push a tag like "v1.0.2": builds from that exact commit and publishes it under
+#     that tag, no matter what.
+#   - Run this workflow manually (workflow_dispatch, the "Run workflow" button): if
+#     main has moved since the last release tag, auto-bumps that tag's last version
+#     segment by one, builds, and publishes under the new tag. If main is exactly the
+#     last released tag (no new commits), it's a no-op — no tag, no build, no release.
 on:
   push:
     tags:
@@ -13,10 +17,58 @@ permissions:
   contents: write
 
 jobs:
+  determine-tag:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.bump.outputs.new_tag }}
+      should_release: ${{ steps.bump.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare HEAD against the last release tag
+        id: bump
+        run: |
+          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -z "$latest_tag" ]; then
+            echo "No existing tags — starting at v1.0.0."
+            echo "new_tag=v1.0.0" >> "$GITHUB_OUTPUT"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          latest_commit=$(git rev-list -n1 "$latest_tag")
+          head_commit=$(git rev-parse HEAD)
+
+          if [ "$latest_commit" = "$head_commit" ]; then
+            echo "No commits since $latest_tag ($latest_commit) — nothing to release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Bump the last dot-separated segment of the tag, e.g. v1.0.1 -> v1.0.2.
+          version="${latest_tag#v}"
+          IFS='.' read -ra parts <<< "$version"
+          last=$(( ${#parts[@]} - 1 ))
+          parts[$last]=$(( parts[$last] + 1 ))
+          new_version=$(IFS=.; echo "${parts[*]}")
+          new_tag="v${new_version}"
+
+          echo "$latest_tag -> $new_tag ($(git rev-list --count "$latest_tag"..HEAD) commit(s) since last release)"
+          echo "new_tag=$new_tag" >> "$GITHUB_OUTPUT"
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+
   release:
+    needs: [determine-tag]
+    if: always() && !cancelled() && (github.event_name == 'push' || needs.determine-tag.outputs.should_release == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -27,16 +79,37 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest
+
       - name: Build debug APK
         run: ./gradlew assembleDebug
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ needs.determine-tag.outputs.new_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.tag.outputs.name }}"
+          git push origin "${{ steps.tag.outputs.name }}"
 
       - name: Rename APK with version tag
         run: |
           mkdir -p release
-          cp app/build/outputs/apk/debug/expense-tracker-debug.apk "release/ExpenseTracker-${GITHUB_REF_NAME}.apk"
+          cp app/build/outputs/apk/debug/expense-tracker-debug.apk "release/ExpenseTracker-${{ steps.tag.outputs.name }}.apk"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.name }}
           files: release/*.apk
           generate_release_notes: true
