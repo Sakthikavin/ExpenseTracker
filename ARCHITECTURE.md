@@ -4,10 +4,10 @@ A tour of how this app is put together, written for someone new to Android Studi
 explains the general Android concept first, then points at the exact file in this repo that uses it.
 
 Related docs:
-- [expense-tracker-spec.md](expense-tracker-spec.md) — *what* the app does and why; the source of truth for scope
 - [SMS_PARSING.md](SMS_PARSING.md) — which messages actually get detected, with worked examples and known gaps
 - [TESTING.md](TESTING.md) — building and testing on the emulator
 - [INSTALL_ON_PHONE.md](INSTALL_ON_PHONE.md) — sideloading onto a real phone
+- [FUTURE_V2.md](FUTURE_V2.md) — the not-yet-built family-sharing/auth plan
 
 > All the diagrams below are [Mermaid](https://mermaid.js.org/). They render in Android Studio's
 > markdown preview (the split-pane button at the top-right of the editor) and on GitHub.
@@ -238,8 +238,10 @@ flowchart LR
         TR["TransactionRepository"]
         BR["BudgetRepository"]
         BIR["BillRepository"]
+        TFR["TransferRepository"]
+        MCR["MerchantCategoryRuleRepository"]
         SR["SmsRepository + SmsParser"]
-        DB --> CR & TR & BR & BIR & SR
+        DB --> CR & TR & BR & BIR & TFR & MCR & SR
     end
 
     AC -->|"MainActivity provides it into<br/>the Compose tree"| LOCAL["LocalAppContainer<br/><i>CompositionLocal</i>"]
@@ -253,7 +255,7 @@ flowchart LR
 The three files involved:
 
 - [di/AppContainer.kt](app/src/main/java/com/example/expensetracker/di/AppContainer.kt) — opens the
-  database once and constructs all five repositories on top of it.
+  database once and constructs all seven repositories on top of it.
 - [ui/common/LocalAppContainer.kt](app/src/main/java/com/example/expensetracker/ui/common/LocalAppContainer.kt) —
   a `CompositionLocal`, i.e. an ambient value any Composable in the tree can read without it being
   passed down through every parameter list. `MainActivity` puts the container in via
@@ -470,8 +472,8 @@ Things worth knowing before you touch the schema:
 - **First run seeds default categories** in `AppDatabase.SeedCallback`: "Unassigned" plus eleven
   starters like Food & Dining, Investments and Salary. `onCreate` fires only when the database is
   first built, so adding to `DEFAULT_CATEGORIES` reaches existing installs only via a migration.
-- **The schema is at `version = 4` with `exportSchema = true`**, so
-  [app/schemas/…/4.json](app/schemas/com.example.expensetracker.data.local.AppDatabase/4.json) is a
+- **The schema is at `version = 5` with `exportSchema = true`**, so
+  [app/schemas/…/5.json](app/schemas/com.example.expensetracker.data.local.AppDatabase/5.json) is a
   checked-in snapshot. Changing any entity means bumping the version and supplying a migration,
   otherwise the app crashes on launch for anyone with the old DB installed.
 - **`MIGRATION_1_2` is the worked example** to copy: it adds `learned_patterns.direction` and a
@@ -485,7 +487,7 @@ Things worth knowing before you touch the schema:
 
 ## 8. Navigation
 
-This is a **single-Activity** app: `MainActivity` is the only Activity, and moving between the seven
+This is a **single-Activity** app: `MainActivity` is the only Activity, and moving between the nine
 screens swaps Composables inside it rather than starting new Activities. That's the modern default —
 faster transitions, one back stack, shared state — as opposed to the older one-Activity-per-screen
 style you'll see in older tutorials.
@@ -493,7 +495,7 @@ style you'll see in older tutorials.
 ```mermaid
 flowchart TD
     subgraph SC["Scaffold — ui/navigation/NavGraph.kt"]
-        TB["TopAppBar<br/>title + 2 action icons"]
+        TB["TopAppBar<br/>title + action icons"]
         NH{{"NavHost<br/>startDestination = dashboard"}}
         BB["NavigationBar — bottom tabs"]
     end
@@ -505,14 +507,17 @@ flowchart TD
     BB -->|bills| BI["BillsScreen<br/><i>recurring bills + reminders</i>"]
 
     TB -->|categories| C["CategoriesScreen<br/><i>add/edit categories</i>"]
-    TB -->|settings| S["SettingsScreen<br/><i>CSV export</i>"]
+    TB -->|accounts| A["AccountsScreen<br/><i>claim + name own accounts</i>"]
+    TB -->|settings| S["SettingsScreen<br/><i>CSV export, SMS import</i>"]
+    C -->|merchant rules| MR["MerchantRulesScreen<br/><i>merchant → category mappings, rename</i>"]
 
-    NH -.->|"hosts all 7 routes"| D & T & R & BU & BI & C & S
+    NH -.->|"hosts all 9 routes"| D & T & R & BU & BI & C & A & S & MR
 ```
 
 - [ui/navigation/Destinations.kt](app/src/main/java/com/example/expensetracker/ui/navigation/Destinations.kt) —
   a sealed class listing each destination's route string, label and icon. `bottomBarItems` picks the
-  five that get tabs; Categories and Settings are reachable only from the top bar.
+  five that get tabs; Categories, My Accounts and Settings are reachable from the top bar, and
+  Merchant Rules is reached from inside Categories.
 - [ui/navigation/NavGraph.kt](app/src/main/java/com/example/expensetracker/ui/navigation/NavGraph.kt) —
   the `Scaffold` and the `NavHost` that maps each route string to its Composable. Tab clicks pop back
   to the start destination first, so the back stack doesn't grow unboundedly as you tab around.

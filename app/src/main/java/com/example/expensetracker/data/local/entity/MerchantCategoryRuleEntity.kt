@@ -7,8 +7,7 @@ import androidx.room.PrimaryKey
 import kotlinx.datetime.Instant
 
 /**
- * "Learn as you categorize" — categorizing a merchant once auto-categorizes it next time. See
- * UX_REDESIGN_PLAN.md Addendum 4/5.
+ * "Learn as you categorize" — categorizing a merchant once auto-categorizes it next time.
  *
  * [categoryId]'s foreign key is CASCADE, unlike [TransactionEntity.categoryId]'s SET_NULL: a rule
  * pointing at a deleted category is a dangling pointer with no reason to survive, unlike a

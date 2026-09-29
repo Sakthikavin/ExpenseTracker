@@ -5,7 +5,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-// Light-only for v1 (matches the rest of the app, per UX_REDESIGN_PLAN.md) — built from the fixed
+// Light-only for v1 (matches the rest of the app) — built from the fixed
 // palette in Color.kt rather than dynamic/wallpaper-derived color, so the app looks the same
 // regardless of device or system theme.
 //

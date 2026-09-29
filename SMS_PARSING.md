@@ -9,7 +9,6 @@ messages, not by reading them by eye.
 
 Related docs:
 - [ARCHITECTURE.md](ARCHITECTURE.md) — the pipeline's structure, §6
-- [expense-tracker-spec.md](expense-tracker-spec.md) — the three-tier design intent, §3
 
 ---
 

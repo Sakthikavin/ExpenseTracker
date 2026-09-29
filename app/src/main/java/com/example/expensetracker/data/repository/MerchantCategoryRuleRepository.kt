@@ -29,11 +29,12 @@ sealed interface CategorizeOutcome {
 }
 
 /**
- * "Learn as you categorize" (UX_REDESIGN_PLAN.md Addendum 4) plus the merchant-rename sub-feature
- * (Addendum 5).
+ * "Learn as you categorize" — categorizing a merchant once auto-categorizes it next time — plus
+ * the merchant-rename feature (a cosmetic [MerchantCategoryRuleEntity.displayName] that never
+ * affects matching).
  *
- * [learnFromCategorization] is the one shared function decision #—"one shared 'set category and
- * learn' function, not two"—requires: both [com.example.expensetracker.ui.transactions.TransactionsViewModel.updateCategory]
+ * [learnFromCategorization] is the one shared "set category and learn" function this depends on:
+ * both [com.example.expensetracker.ui.transactions.TransactionsViewModel.updateCategory]
  * and [SmsRepository.confirmReview] call through it (directly or via [setCategoryAndLearn]) rather
  * than duplicating the retroactive-apply/rule-drift logic.
  */

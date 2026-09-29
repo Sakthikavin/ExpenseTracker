@@ -144,7 +144,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
-         * v4 → v5: "learn as you categorize" merchant rules (UX_REDESIGN_PLAN.md Addendum 4/5).
+         * v4 → v5: "learn as you categorize" merchant rules.
          *
          * `categoryId`'s foreign key is CASCADE — unlike `transactions.categoryId`'s SET_NULL — a
          * rule pointing at a deleted category is a dangling pointer with no reason to survive.
@@ -175,7 +175,7 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // Colours are the validated 8-slot categorical palette from UX_REDESIGN_PLAN.md, assigned
+        // Colours are the validated 8-slot categorical palette, assigned
         // by category identity (slot order: Bills & Utilities, Investments, Unassigned, Groceries,
         // Entertainment, Health, Food & Dining, Transport). Categories beyond that table cycle back
         // starting at slot 1, paired with their own distinct icon so hue is never the sole signal.
