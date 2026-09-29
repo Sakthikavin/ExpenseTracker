@@ -5,8 +5,8 @@ Two ways to get the APK onto your phone: download a prebuilt one from GitHub Rel
 
 ## Option A: Download from GitHub Releases
 
-[.github/workflows/release.yml](.github/workflows/release.yml) builds the debug APK and
-attaches it to a GitHub Release whenever a tag like `v1.0` is pushed:
+[.github/workflows/release.yml](.github/workflows/release.yml) builds a signed release APK
+and attaches it to a GitHub Release whenever a tag like `v1.0` is pushed:
 
 ```bash
 git tag v1.0
@@ -81,10 +81,15 @@ app drawer.
 ## Updating later
 
 **From a release:** push a new tag (`git tag v1.1 && git push origin v1.1`) and repeat
-Option A. **From a local build:** repeat Option B's steps with a freshly built APK. Either
-way, Android offers to **update** the existing app rather than install a duplicate — your
-data (transactions, categories, budgets) is preserved across updates as long as you don't
-uninstall first.
+Option A. Android offers to **update** the existing app rather than install a duplicate —
+your data (transactions, categories, budgets) survives, as long as you don't uninstall
+first. Every release is signed with the same key, which is what makes that possible.
+
+**From a local build:** repeat Option B's steps with a freshly built APK. A local debug
+build is signed with this Mac's debug key, not the release key, so it **cannot** update an
+install that came from a GitHub Release — Android refuses with "package conflicts with an
+existing package". Switching between the two means uninstalling first, and losing the data
+with it. Pick one source and stay on it.
 
 ## Granting SMS permissions on your real phone
 

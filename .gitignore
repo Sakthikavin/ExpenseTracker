@@ -63,3 +63,6 @@ lint/tmp/
 /images/
 /preview_daterange.png
 /UX_REDESIGN_PLAN.md
+# Signing keys never belong in the repo (the release keystore lives outside it).
+*.jks
+*.keystore

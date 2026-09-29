@@ -82,8 +82,20 @@ jobs:
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest
 
-      - name: Build debug APK
-        run: ./gradlew assembleDebug
+      # Every release is signed with the same key, so each one installs over the last. A build
+      # signed with a different key can't upgrade an existing install — Android rejects it as
+      # "package conflicts with an existing package" — which is what happened while these APKs
+      # were debug builds, signed with a keystore the runner generated fresh each time.
+      - name: Restore signing keystore
+        run: echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/release.jks"
+
+      - name: Build release APK
+        env:
+          RELEASE_KEYSTORE_PATH: ${{ runner.temp }}/release.jks
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease
 
       - name: Resolve release tag
         id: tag
@@ -105,7 +117,7 @@ jobs:
       - name: Rename APK with version tag
         run: |
           mkdir -p release
-          cp app/build/outputs/apk/debug/expense-tracker-debug.apk "release/ExpenseTracker-${{ steps.tag.outputs.name }}.apk"
+          cp app/build/outputs/apk/release/expense-tracker.apk "release/ExpenseTracker-${{ steps.tag.outputs.name }}.apk"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

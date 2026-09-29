@@ -38,11 +38,27 @@ android {
         }
     }
 
+    // Release signing comes from the environment (CI secrets, or a local export) rather than a
+    // checked-in keystore. Without it the release variant stays unsigned and only `assembleRelease`
+    // is affected — debug builds and the test tasks don't care.
+    val keystorePath = System.getenv("RELEASE_KEYSTORE_PATH")
+    signingConfigs {
+        if (keystorePath != null) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             optimization {
                 enable = false
             }
+            signingConfig = signingConfigs.findByName("release")
         }
     }
     compileOptions {
