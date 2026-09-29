@@ -10,6 +10,13 @@ android {
         version = release(37)
     }
 
+    // release.yml ships the **debug** APK as-is (see INSTALL_ON_PHONE.md) — there is no separate
+    // signed release build friends/family install. So the debug/release build *type* must not be
+    // what selects the Firestore backend; that would point every real install at the local
+    // emulator. Local emulator testing opts in instead via `-PfirestoreEmulator=true` (or
+    // `firestoreEmulator=true` in a gitignored gradle.properties), which nothing sets by default.
+    val useEmulatorRules = (findProperty("firestoreEmulator") as String?)?.toBoolean() ?: false
+
     defaultConfig {
         applicationId = "com.example.expensetracker"
         minSdk = 24
@@ -18,6 +25,17 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        if (useEmulatorRules) {
+            // Reached via `adb reverse tcp:8080 tcp:8080`, which tunnels the device's own
+            // 127.0.0.1:8080 to the host's — works for AVDs and physical devices alike, unlike
+            // the 10.0.2.2 NAT alias (not routed by every AVD's network config).
+            buildConfigField("String", "FIRESTORE_PROJECT_ID", "\"demo-rules-console\"")
+            buildConfigField("String", "FIRESTORE_BASE_URL", "\"http://127.0.0.1:8080\"")
+        } else {
+            buildConfigField("String", "FIRESTORE_PROJECT_ID", "\"expense-tracker-rules-console\"")
+            buildConfigField("String", "FIRESTORE_BASE_URL", "\"https://firestore.googleapis.com\"")
+        }
     }
 
     buildTypes {
@@ -33,6 +51,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     ksp {
         arg("room.schemaLocation", "$projectDir/schemas")

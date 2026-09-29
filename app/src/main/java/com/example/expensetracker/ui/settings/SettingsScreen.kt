@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
@@ -48,11 +50,13 @@ import androidx.core.content.ContextCompat
 import com.example.expensetracker.export.CsvExporter
 import com.example.expensetracker.ui.common.LocalAppContainer
 import com.example.expensetracker.ui.common.appViewModel
+import com.example.expensetracker.ui.common.formatDateTime
 import com.example.expensetracker.ui.common.parseInrInputToMinorUnits
 import com.example.expensetracker.ui.theme.StatusGood
 import com.example.expensetracker.ui.theme.StatusWarning
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.datetime.Instant
 
 @Composable
 fun SettingsScreen(onNavigateToReview: () -> Unit) {
@@ -61,15 +65,19 @@ fun SettingsScreen(onNavigateToReview: () -> Unit) {
     val scope = rememberCoroutineScope()
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
-    val settingsViewModel = appViewModel { SettingsViewModel(container.smsRepository) }
+    val settingsViewModel = appViewModel {
+        SettingsViewModel(container.smsRepository, container.remoteRulesRepository)
+    }
     val importProgress by settingsViewModel.importProgress.collectAsState()
     val lastImportAt by settingsViewModel.lastImportAt.collectAsState()
     val ignoreBelowMinor by settingsViewModel.ignoreBelowMinor.collectAsState()
+    val ruleUpdateState by settingsViewModel.ruleUpdateState.collectAsState()
 
     val prefs = remember { context.getSharedPreferences("settings", Context.MODE_PRIVATE) }
     LaunchedEffect(Unit) {
         settingsViewModel.loadLastImportAt(prefs)
         settingsViewModel.loadIgnoreBelowMinor(prefs)
+        settingsViewModel.loadRuleUpdateState()
     }
     var ignoreBelowText by remember { mutableStateOf("") }
     LaunchedEffect(ignoreBelowMinor) { ignoreBelowText = "%.2f".format(ignoreBelowMinor / 100.0) }
@@ -104,7 +112,10 @@ fun SettingsScreen(onNavigateToReview: () -> Unit) {
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
@@ -212,6 +223,39 @@ fun SettingsScreen(onNavigateToReview: () -> Unit) {
                 }
             },
         ) { Text("Clean up confirmation-only messages") }
+
+        HorizontalDivider()
+
+        Text(
+            "Rule updates",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            if (ruleUpdateState.version != null) {
+                "Current version: v${ruleUpdateState.version}"
+            } else {
+                "No rules downloaded yet"
+            },
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            "Last checked: " + (
+                ruleUpdateState.lastCheckedAtMillis
+                    ?.let { formatDateTime(Instant.fromEpochMilliseconds(it)) }
+                    ?: "never"
+                ),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button(
+            onClick = { settingsViewModel.checkForRuleUpdates() },
+            enabled = !ruleUpdateState.isChecking,
+        ) { Text(if (ruleUpdateState.isChecking) "Checking…" else "Check now") }
+        ruleUpdateState.message?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
 
         statusMessage?.let { Text(it) }
     }

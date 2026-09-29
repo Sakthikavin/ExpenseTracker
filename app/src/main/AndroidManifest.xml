@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.READ_SMS" />
     <!-- Runtime permission on Android 13+, needed for bill reminder notifications. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Pulling the published rule set from Firestore (data/remoterules). -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:name=".ExpenseTrackerApp"

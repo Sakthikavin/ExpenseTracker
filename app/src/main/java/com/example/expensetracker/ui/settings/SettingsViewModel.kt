@@ -6,6 +6,8 @@ import android.provider.Telephony
 import androidx.core.content.edit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.expensetracker.data.remoterules.RemoteRulesRepository
+import com.example.expensetracker.data.remoterules.RuleSyncResult
 import com.example.expensetracker.data.repository.IngestResult
 import com.example.expensetracker.data.repository.SmsRepository
 import com.example.expensetracker.data.sms.SmsParser
@@ -29,7 +31,18 @@ data class ImportProgress(
     val ignored: Int = 0,
 )
 
-class SettingsViewModel(private val smsRepository: SmsRepository) : ViewModel() {
+/** Live state of the "Rule updates" section (§8.2). */
+data class RuleUpdateState(
+    val version: Int?,
+    val lastCheckedAtMillis: Long?,
+    val isChecking: Boolean = false,
+    val message: String? = null,
+)
+
+class SettingsViewModel(
+    private val smsRepository: SmsRepository,
+    private val remoteRulesRepository: RemoteRulesRepository,
+) : ViewModel() {
 
     private val _importProgress = MutableStateFlow(ImportProgress())
     val importProgress: StateFlow<ImportProgress> = _importProgress.asStateFlow()
@@ -39,6 +52,21 @@ class SettingsViewModel(private val smsRepository: SmsRepository) : ViewModel() 
 
     private val _ignoreBelowMinor = MutableStateFlow(SmsParser.DEFAULT_IGNORE_BELOW_MINOR)
     val ignoreBelowMinor: StateFlow<Long> = _ignoreBelowMinor.asStateFlow()
+
+    private val _ruleUpdateState = MutableStateFlow(RuleUpdateState(version = null, lastCheckedAtMillis = null))
+    val ruleUpdateState: StateFlow<RuleUpdateState> = _ruleUpdateState.asStateFlow()
+
+    /**
+     * Re-reads the repository's in-memory cache. Needed because the app-launch `syncIfDue()` and
+     * the daily worker both run outside this ViewModel and can finish after it was constructed —
+     * a plain constructor-time snapshot would go stale the moment either of those completes.
+     */
+    fun loadRuleUpdateState() {
+        _ruleUpdateState.value = _ruleUpdateState.value.copy(
+            version = remoteRulesRepository.cachedVersion,
+            lastCheckedAtMillis = remoteRulesRepository.lastCheckedAtMillis,
+        )
+    }
 
     fun loadLastImportAt(prefs: SharedPreferences) {
         val millis = prefs.getLong(PREF_LAST_IMPORT_AT, -1L)
@@ -98,6 +126,28 @@ class SettingsViewModel(private val smsRepository: SmsRepository) : ViewModel() 
     fun dismissSummary() {
         if (_importProgress.value.isRunning) return
         _importProgress.value = ImportProgress()
+    }
+
+    /** "Check now" (§8.2) — same sync path the daily worker uses, run synchronously for the tap. */
+    fun checkForRuleUpdates() {
+        if (_ruleUpdateState.value.isChecking) return
+        viewModelScope.launch {
+            _ruleUpdateState.value = _ruleUpdateState.value.copy(isChecking = true, message = null)
+            val message = when (val result = remoteRulesRepository.sync()) {
+                is RuleSyncResult.UpToDate -> "Already up to date (v${result.version})"
+                is RuleSyncResult.Updated -> {
+                    val ruleWord = if (result.newRuleCount == 1) "rule" else "rules"
+                    "Updated to v${result.toVersion} — ${result.newRuleCount} new $ruleWord."
+                }
+                RuleSyncResult.Failed -> "Couldn't reach the rules server. Try again later."
+            }
+            _ruleUpdateState.value = RuleUpdateState(
+                version = remoteRulesRepository.cachedVersion,
+                lastCheckedAtMillis = remoteRulesRepository.lastCheckedAtMillis,
+                isChecking = false,
+                message = message,
+            )
+        }
     }
 
     private fun readInbox(contentResolver: ContentResolver): List<InboxMessage> {

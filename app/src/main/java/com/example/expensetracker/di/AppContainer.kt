@@ -1,7 +1,10 @@
 package com.example.expensetracker.di
 
 import android.content.Context
+import com.example.expensetracker.BuildConfig
 import com.example.expensetracker.data.local.AppDatabase
+import com.example.expensetracker.data.remoterules.RemoteRulesApi
+import com.example.expensetracker.data.remoterules.RemoteRulesRepository
 import com.example.expensetracker.data.repository.BillRepository
 import com.example.expensetracker.data.repository.BudgetRepository
 import com.example.expensetracker.data.repository.CategoryRepository
@@ -38,8 +41,17 @@ class AppContainer(context: Context) {
         transactionRepository = transactionRepository,
     )
 
+    val remoteRulesRepository = RemoteRulesRepository(
+        api = RemoteRulesApi(
+            projectId = BuildConfig.FIRESTORE_PROJECT_ID,
+            baseUrl = BuildConfig.FIRESTORE_BASE_URL,
+        ),
+        prefs = prefs,
+    )
+
     private val smsParser = SmsParser(
         learnedPatternDao = database.learnedPatternDao(),
+        remoteRulesRepository = remoteRulesRepository,
         ignoreBelowMinor = { prefs.getLong(SmsParser.PREF_IGNORE_BELOW_MINOR, SmsParser.DEFAULT_IGNORE_BELOW_MINOR) },
     )
     val smsRepository = SmsRepository(

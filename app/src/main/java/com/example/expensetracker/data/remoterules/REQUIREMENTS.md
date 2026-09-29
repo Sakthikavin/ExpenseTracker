@@ -73,6 +73,26 @@ at parse time, so a noisy sender you identify from one person's submissions (e.g
 NPS/mandate confirmation sender) silences it for everyone on the next sync, not just the
 person who reported it.
 
+### 5.1 Sender normalization
+
+A rule's `senders` and `discardSenders` are stored in `PatternLearner.normaliseSender` form
+(`VM-FEDBNK` → `FEDBNK`), matching how the console groups submissions. Both `tryMatch` and the
+discard check must run the incoming SMS sender through `normaliseSender` before comparing —
+never compare against the raw header.
+
+### 5.2 How a rule is picked (must match the console's prediction)
+
+The console predicts which submission groups a rule-set change gains or loses, so the on-device
+selection has to follow this exact order:
+
+1. `normaliseSender(sender)` in `discardSenders` → treat as noise, skip remote-rule matching
+   entirely.
+2. Otherwise, walk rules whose `senders` contain the normalized sender, by `priority` descending
+   (ties keep list order as published).
+3. The first rule that matches the body **and** yields a non-empty value for every `fieldMap`
+   group wins; a rule missing a mapped field falls through to the next candidate.
+4. Rules that fail to compile (§10) are skipped, never considered a match.
+
 Rationale for putting remote rules *before* local learned patterns: a remote rule has been
 reviewed by you against real samples and is shared infrastructure; a local learned pattern
 is a same-device guess PatternLearner made from one confirmation and should be superseded
@@ -98,6 +118,13 @@ never raw text, before anything is queued for upload. Same idea as `PatternLearn
 | Merchant / payee name | **kept** — this is what most rules need to anchor on, and it's already a payee name the user chose to transact with, not private banking data |
 | Sender ID (`VM-FEDBNK`) | kept as-is | needed to route the rule to the right bank |
 
+### 6.1.1 Redaction check
+
+Before upload, `Redactor` must flag (and the app must refuse to send) any template that still
+contains 5+ consecutive digits or an `x@y`-shaped handle outside the `<...>` placeholders above —
+same rule the console applies to inbound submissions. Add this as a unit test alongside the
+existing `Redactor` tests, covering both a stray digit run and a stray handle.
+
 ### 6.2 Worked example
 
 Raw:
@@ -117,6 +144,19 @@ only the *shape* of the message, which is all a regex needs.
 
 ### 6.3 Submission payload
 
+`firestore.rules` rejects anything outside this shape, so the client must send exactly:
+
+| Field             | Required                  | Type / limit                                  |
+|-------------------|----------------------------|------------------------------------------------|
+| `template`        | yes                       | string, 1–2000                                |
+| `sender`          | yes                       | string, 1–40 (raw header is fine)             |
+| `action`          | yes                       | `"review"` or `"discard"`                     |
+| `submittedAt`     | yes                       | ISO-8601 string, ≤ 40                         |
+| `transactionType` | no                        | string, ≤ 30                                  |
+| `note`            | no                        | string, ≤ 200                                 |
+| `appVersion`      | no                        | string, ≤ 30                                  |
+| `rulesVersion`    | no (send it)              | int ≥ 0, rule-set version loaded on the phone |
+
 ```json
 {
   "template": "Rs.<AMT> debited from A/c XX<D4> to VPA <VPA> Ref <REF> on <DATE>.\nAvl Bal <BAL>",
@@ -125,6 +165,7 @@ only the *shape* of the message, which is all a regex needs.
   "transactionType": "upi",
   "note": "UPI payment to a shop",
   "appVersion": "1.4.0",
+  "rulesVersion": 42,
   "submittedAt": "2026-09-29T03:20:00Z"
 }
 ```
@@ -132,7 +173,9 @@ only the *shape* of the message, which is all a regex needs.
 `action` is `"review"` (parser missed it, please write a rule) or `"discard"` (this
 sender/shape is noise, please add it to `discardSenders`). No device or user identifier is
 sent — submissions are anonymous by design; you don't need to know whose message it was to
-write a rule for it.
+write a rule for it. `rulesVersion` lets a resolved group reopen only when a phone that already
+has the fix still fails to parse. If this payload shape ever changes, update the console's
+`firestore.rules` in the same change.
 
 ## 7. Review-queue UI changes (`ui/review`)
 
@@ -172,10 +215,35 @@ Tapping "Check now" calls the same sync path synchronously and shows one of:
 - "Already up to date (v42)"
 - "Updated to v43 — 3 new rules. Re-checked 12 pending messages, cleared 5."
 
+### 8.3 Device status
+
+On each rules sync and app launch, write `/devices/{uid}` (`uid` = the phone's anonymous-auth
+uid; a phone can only write its own doc, enforced by `firestore.rules`):
+
+| Field           | Required | Type / limit                              |
+|-----------------|----------|--------------------------------------------|
+| `rulesVersion`  | yes      | int ≥ 0                                   |
+| `lastSeen`      | yes      | ISO-8601 string, ≤ 40                     |
+| `lastRulesSync` | no       | ISO-8601 string, ≤ 40                     |
+| `appVersion`    | no       | string, ≤ 30                              |
+| `model`         | no       | string, ≤ 60                              |
+| `label`         | no       | string, ≤ 40, user-set name (e.g. "Amma") |
+
+Submissions never carry this uid, so a device can't be linked to what it submitted — the console's
+devices page and the submissions inbox stay unlinkable by design. This settles §11 Q2 in favour of
+**anonymous auth**.
+
 ## 9. Firebase data shape
 
+**Decided: Firestore** (not Realtime Database) — the console's main job is grouping
+submissions by template, which Firestore's queries give for free (§11 Q1).
+
+The live rule set is a single document, `/rules/current` — Firestore needs a doc id, so the
+collection is `rules` but the app only ever fetches the `current` doc. `RemoteRulesApi` must read
+`rules/current`, not the `rules` collection.
+
 ```
-/rules                        (public read, admin-only write)
+/rules/current                 (public read, admin-only write)
   version: 43
   updatedAt: "2026-09-29T03:00:00Z"
   discardSenders: ["NPSCRA", "PTNNPS", "AXISMF", "ITDCPC", "SOMEBANKPROMO"]
@@ -185,29 +253,54 @@ Tapping "Check now" calls the same sync path synchronously and shows one of:
       "senders": ["FEDBNK"],
       "direction": "debit",
       "pattern": "Rs\\.?(?<amount>[\\d,.]+) debited from A/c (?<account>[X*\\d]+) to VPA (?<merchant>\\S+)",
-      "fieldMap": { "amount": 1, "merchant": 2 },
+      "fieldMap": { "amount": 1, "account": 2, "merchant": 3 },
       "priority": 10,
       "addedAt": "2026-09-20T00:00:00Z"
     }
   ]
 
 /submissions/{autoId}          (write-only for clients, no client read; you read via console)
-  template, sender, action, transactionType, note, appVersion, submittedAt
+  template, sender, action, transactionType, note, appVersion, rulesVersion, submittedAt
+
+/devices/{uid}                 (see §8.3; console-only read)
+/rules_history/{version}       (console-only, snapshot of each published rule set)
+/groupStates/{groupId}         (console-only, tracks reviewer state per submission group)
 ```
 
-Security rules (Realtime Database, equivalent Firestore rules apply):
+`fieldMap` values are capture-group **numbers**, not named-group lookups — count every capturing
+group left-to-right, unnamed ones included (`(?:…)` doesn't count). In the pattern above, group 1
+is `amount`, group 2 is `account`, group 3 is `merchant`.
 
-```json
-{
-  "rules": {
-    "rules": { ".read": true, ".write": "auth != null && auth.token.email == 'desigrsujithnivel@gmail.com'" },
-    "submissions": { ".read": "auth != null && auth.token.email == 'desigrsujithnivel@gmail.com'", ".write": true }
-  }
+Security rules are Firestore, not Realtime Database. The real rules live in the console repo's
+`firestore.rules` — keep this spec in sync with it, don't hand-copy a stale snippet:
+
+```
+function isAdmin() {
+  return request.auth != null
+    && request.auth.token.email == 'sakthikavincit@gmail.com'
+    && request.auth.token.email_verified;
+}
+
+match /rules/{doc} {
+  allow read: if true;
+  allow write: if isAdmin();
+}
+
+match /submissions/{doc} {
+  allow create: if isValidSubmission(request.resource.data);   // §6.3 payload shape
+  allow read, update, delete: if isAdmin();
+}
+
+match /devices/{uid} {
+  allow read, delete: if isAdmin();
+  allow create, update: if request.auth != null && request.auth.uid == uid
+    && isValidDevice(request.resource.data);                    // §8.3 payload shape
 }
 ```
 
-Anonymous Firebase Auth (no login) is enough for the app to write submissions; only the
-console needs a real signed-in identity, gated to your email.
+Anonymous Firebase Auth (no login) is enough for the app to write submissions and its own
+`/devices/{uid}` doc; only the console needs a real signed-in identity, gated to the admin email
+above.
 
 ## 10. Local caching
 
@@ -217,24 +310,41 @@ console needs a real signed-in identity, gated to your email.
 - A rule whose `pattern` fails to compile (bad regex pushed by mistake) is skipped and
   logged, never crashes the parser — same defensive posture as `PatternLearner.applyToBody`.
 
+### 10.1 Regex dialect
+
+Patterns are validated against `java.util.regex` by the console, so the app must compile them
+the same way:
+
+- Compile with plain `Regex(pattern)` — **no extra `RegexOption`s** — so inline flags in the
+  pattern take effect as written.
+- A leading `(?i)` is allowed and is how the console writes case-insensitive rules; don't strip
+  or reinterpret it.
+- The console refuses to publish patterns Java can't handle, so a compiled rule should never hit
+  these, but the app's compile-failure handling above must still catch them defensively: group
+  names with non-alphanumeric characters (e.g. `merchant_name`), `*`/`+` inside a lookbehind, and
+  `\p{…}` Unicode property classes.
+
 ## 11. Open questions for you to decide before implementation starts
 
-1. Firebase Realtime Database vs. Firestore — RTDB is simpler for this shape (one small
-   rules doc, an append-only submissions list); Firestore gives you query/grouping for free
-   in the console. Recommendation: **Firestore**, since the console's main job is grouping
-   submissions by template.
-2. Anonymous auth for submissions, or fully open unauthenticated write with App Check to
-   stop abuse? For a handful of trusted friends/family, anonymous auth is simplest.
+1. ~~Firebase Realtime Database vs. Firestore~~ — **Decided: Firestore** (§9). The rules doc
+   lives at `rules/current`; console-only collections are `rules_history`, `groupStates`, and
+   `devices`.
+2. ~~Anonymous auth for submissions, or fully open unauthenticated write with App Check?~~ —
+   **Decided: anonymous auth** (§8.3). Every install writes its own `/devices/{uid}` doc, keyed
+   by its anonymous-auth uid; submissions never carry that uid, so a device can't be linked to
+   what it submitted.
 3. Should "discard" submissions ever need your review, or can obvious ones (sender already
    in a common OTP/promo list) be filtered client-side before upload? Suggest: filter
    client-side against a small local blocklist first, only upload discards for senders not
-   already known.
+   already known. Still open.
 
 ## 12. Milestones
 
-- **M1** — Pull + apply: fetch `/rules`, cache, insert into parse order, manual "Check now"
-  button. No submission yet — ships value (your hand-curated rules reach every phone)
-  before the upload half exists.
+- **M1** — Pull + apply: fetch `rules/current`, cache, insert into parse order, manual
+  "Check now" button. No submission yet — ships value (your hand-curated rules reach every
+  phone) before the upload half exists.
 - **M2** — Submission: redaction, the review/discard sheets, upload to `/submissions`.
 - **M3** — Backlog re-parse on sync, submitted-state tracking so rows aren't re-prompted.
-- **M4** — Web console (separate repo, see `expense-tracker-rules-console`).
+- **M4** — Web console (separate repo, `expense-tracker-rules-console`). **Built.** Covers:
+  inbox, rule editor/tester, rules page, publish with diff and impact check, history/rollback,
+  and a devices page that shows sample data until §8.3 ships on the Android side.
