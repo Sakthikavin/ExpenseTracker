@@ -18,10 +18,10 @@ class RemoteRuleSyncWorker(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
-        val repository = (applicationContext as ExpenseTrackerApp).container.remoteRulesRepository
+        val coordinator = (applicationContext as ExpenseTrackerApp).container.ruleSyncCoordinator
         // Retry (WorkManager backoff) only on an actual network/parse failure — a fetch that
         // succeeded but found nothing new is still a successful run.
-        return when (repository.sync()) {
+        return when (coordinator.sync().result) {
             RuleSyncResult.Failed -> Result.retry()
             is RuleSyncResult.UpToDate, is RuleSyncResult.Updated -> Result.success()
         }

@@ -168,6 +168,25 @@ class MigrationTest {
         assertTrue("the unique index must reject a duplicate merchantKey", threw)
     }
 
+    @Test
+    fun migrate5To6_addsSubmittedAtAndKeepsQueuedMessages() {
+        helper.createDatabase(dbName, 5).use { db ->
+            db.execSQL(
+                "INSERT INTO raw_sms (sender, body, receivedAt, parseStatus) " +
+                    "VALUES ('AD-AXISBK', 'Your A/c has been debited towards Google Play', 1000, 'NEEDS_REVIEW')",
+            )
+        }
+
+        val db = helper.runMigrationsAndValidate(dbName, 6, true, AppDatabase.MIGRATION_5_6)
+
+        db.query("SELECT sender, submittedAt FROM raw_sms").use { cursor ->
+            assertEquals(1, cursor.count)
+            cursor.moveToFirst()
+            assertEquals("AD-AXISBK", cursor.getString(0))
+            assertTrue("a message queued before this column has never been submitted", cursor.isNull(1))
+        }
+    }
+
     /** The path a phone still on the original release actually takes. */
     @Test
     fun migrate1To3_runsBothStepsInOrder() {

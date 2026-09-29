@@ -66,7 +66,7 @@ fun SettingsScreen(onNavigateToReview: () -> Unit) {
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
     val settingsViewModel = appViewModel {
-        SettingsViewModel(container.smsRepository, container.remoteRulesRepository)
+        SettingsViewModel(container.smsRepository, container.ruleSyncCoordinator)
     }
     val importProgress by settingsViewModel.importProgress.collectAsState()
     val lastImportAt by settingsViewModel.lastImportAt.collectAsState()

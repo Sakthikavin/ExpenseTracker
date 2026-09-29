@@ -22,4 +22,10 @@ data class RawSmsEntity(
     val receivedAt: Instant,
     val parseStatus: ParseStatus,
     val linkedTransactionId: Long? = null,
+    /**
+     * When this message's redacted template was uploaded for a rule to be written for it. Null
+     * until then; set so the review queue stops offering to send a message that's already waiting
+     * on a rule.
+     */
+    val submittedAt: Instant? = null,
 )

@@ -5,6 +5,7 @@ import com.example.expensetracker.BuildConfig
 import com.example.expensetracker.data.local.AppDatabase
 import com.example.expensetracker.data.remoterules.RemoteRulesApi
 import com.example.expensetracker.data.remoterules.RemoteRulesRepository
+import com.example.expensetracker.data.remoterules.RuleSyncCoordinator
 import com.example.expensetracker.data.remoterules.SubmissionRepository
 import com.example.expensetracker.data.repository.BillRepository
 import com.example.expensetracker.data.repository.BudgetRepository
@@ -70,4 +71,6 @@ class AppContainer(context: Context) {
         transferRepository = transferRepository,
         merchantCategoryRuleRepository = merchantCategoryRuleRepository,
     )
+
+    val ruleSyncCoordinator = RuleSyncCoordinator(remoteRulesRepository, smsRepository)
 }

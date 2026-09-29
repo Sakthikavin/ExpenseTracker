@@ -15,6 +15,7 @@ import com.example.expensetracker.data.sms.SmsDateParser
 import com.example.expensetracker.data.sms.SmsParser
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.datetime.Clock
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
@@ -24,6 +25,9 @@ import kotlinx.datetime.toLocalDateTime
 
 /** Which bucket [SmsRepository.ingest] sorted a message into — what the SMS history importer counts. */
 enum class IngestResult { IMPORTED, NEEDS_REVIEW, IGNORED }
+
+/** What [SmsRepository.reparseNeedsReview] did: how many queued messages it re-read, and how many left the queue. */
+data class ReparseOutcome(val checked: Int, val cleared: Int)
 
 class SmsRepository(
     private val rawSmsDao: RawSmsDao,
@@ -55,54 +59,15 @@ class SmsRepository(
                 // is what stops the same alert being counted as a second transaction.
                 if (rawSmsId == DUPLICATE_ROW_ID) return IngestResult.IMPORTED
 
-                // Two SMS can describe one movement of money — a debit alert and the transfer
-                // confirmation that follows it. Recording both would double-count the payment.
-                reconcileWithExisting(outcome.parsed, sender, body, receivedAt, rawSmsId)?.let { existing ->
-                    rawSmsDao.update(
-                        RawSmsEntity(
-                            id = rawSmsId,
-                            sender = sender,
-                            body = body,
-                            receivedAt = receivedAt,
-                            parseStatus = ParseStatus.PARSED,
-                            linkedTransactionId = existing,
-                        ),
-                    )
-                    return IngestResult.IMPORTED
-                }
-
-                // Silent per Addendum 4, decision #3: a transaction from an already-known merchant
-                // is born categorized, no confirmation needed. Pure lookup — never learns, never
-                // prompts; that only happens where a human actually chooses a category.
-                val ruleCategoryId = merchantCategoryRuleRepository?.categoryForMerchant(outcome.parsed.merchant)
-                val transactionId = createTransaction(
-                    amountMinor = outcome.parsed.amountMinor,
-                    direction = outcome.parsed.direction,
-                    merchant = outcome.parsed.merchant,
-                    rawSmsId = rawSmsId,
-                    occurredAt = SmsDateParser.plausibleOccurredAt(outcome.parsed.occurredAt, receivedAt),
-                    categoryId = ruleCategoryId,
-                    accountLabel = outcome.parsed.accountLabel,
-                    referenceId = outcome.parsed.referenceId,
-                )
-                // Close the raw <-> transaction link; without this the auto-parsed majority of rows
-                // point nowhere and only manually confirmed ones are traceable.
-                rawSmsDao.update(
+                recordParsed(
                     RawSmsEntity(
                         id = rawSmsId,
                         sender = sender,
                         body = body,
                         receivedAt = receivedAt,
                         parseStatus = ParseStatus.PARSED,
-                        linkedTransactionId = transactionId,
                     ),
-                )
-
-                // Money moved between the user's own accounts produces two legs; pairing them here
-                // keeps both rows while stopping either from counting as spending or income.
-                transferRepository?.tryPair(
-                    transaction = transactionRepository.getById(transactionId) ?: return IngestResult.IMPORTED,
-                    counterpartyAccount = outcome.parsed.counterpartyAccount,
+                    outcome.parsed,
                 )
                 return IngestResult.IMPORTED
             }
@@ -194,6 +159,77 @@ class SmsRepository(
         } else {
             CategorizeOutcome.Applied
         }
+    }
+
+    /**
+     * Records [parsed] against an existing `raw_sms` row: the shared tail of first-time ingestion
+     * and of a re-parse once a new rule finally reads a message that was sitting in review.
+     */
+    private suspend fun recordParsed(rawSms: RawSmsEntity, parsed: ParsedSms) {
+        // Two SMS can describe one movement of money — a debit alert and the transfer confirmation
+        // that follows it. Recording both would double-count the payment.
+        reconcileWithExisting(parsed, rawSms.sender, rawSms.body, rawSms.receivedAt, rawSms.id)?.let { existing ->
+            rawSmsDao.update(rawSms.copy(parseStatus = ParseStatus.PARSED, linkedTransactionId = existing))
+            return
+        }
+
+        // Silent per Addendum 4, decision #3: a transaction from an already-known merchant is born
+        // categorized, no confirmation needed. Pure lookup — never learns, never prompts; that only
+        // happens where a human actually chooses a category.
+        val ruleCategoryId = merchantCategoryRuleRepository?.categoryForMerchant(parsed.merchant)
+        val transactionId = createTransaction(
+            amountMinor = parsed.amountMinor,
+            direction = parsed.direction,
+            merchant = parsed.merchant,
+            rawSmsId = rawSms.id,
+            occurredAt = SmsDateParser.plausibleOccurredAt(parsed.occurredAt, rawSms.receivedAt),
+            categoryId = ruleCategoryId,
+            accountLabel = parsed.accountLabel,
+            referenceId = parsed.referenceId,
+        )
+        // Close the raw <-> transaction link; without this the auto-parsed majority of rows point
+        // nowhere and only manually confirmed ones are traceable.
+        rawSmsDao.update(rawSms.copy(parseStatus = ParseStatus.PARSED, linkedTransactionId = transactionId))
+
+        // Money moved between the user's own accounts produces two legs; pairing them here keeps
+        // both rows while stopping either from counting as spending or income.
+        transferRepository?.tryPair(
+            transaction = transactionRepository.getById(transactionId) ?: return,
+            counterpartyAccount = parsed.counterpartyAccount,
+        )
+    }
+
+    /**
+     * Re-runs the parser over the review queue, which is what a freshly pulled rule set is for
+     * (§8.1): a rule written for a message already sitting in review should clear it, without
+     * waiting for the bank to send another one.
+     *
+     * Capped at the most recent [REPARSE_LIMIT] rows — the backlog a new rule plausibly speaks to,
+     * bounded so a large queue can't turn a background sync into a long database write.
+     */
+    suspend fun reparseNeedsReview(): ReparseOutcome {
+        val pending = rawSmsDao.getByStatus(ParseStatus.NEEDS_REVIEW, REPARSE_LIMIT)
+        var cleared = 0
+        for (rawSms in pending) {
+            when (val outcome = parser.parse(rawSms.sender, rawSms.body)) {
+                is ParseOutcome.Parsed -> {
+                    recordParsed(rawSms, outcome.parsed)
+                    cleared++
+                }
+                // A sender newly added to discardSenders: the queue should stop showing its noise.
+                ParseOutcome.IgnoredAsNoise -> {
+                    rawSmsDao.update(rawSms.copy(parseStatus = ParseStatus.IGNORED))
+                    cleared++
+                }
+                ParseOutcome.NeedsReview, ParseOutcome.Ignored -> Unit
+            }
+        }
+        return ReparseOutcome(checked = pending.size, cleared = cleared)
+    }
+
+    /** Remembers that this message's template went off for a rule, so it isn't offered again. */
+    suspend fun markSubmitted(rawSms: RawSmsEntity, at: Instant = Clock.System.now()) {
+        rawSmsDao.update(rawSms.copy(submittedAt = at))
     }
 
     /**
@@ -382,6 +418,9 @@ class SmsRepository(
 
     private companion object {
         const val DUPLICATE_ROW_ID = -1L
+
+        /** Cap on how much of the review backlog one sync re-parses (§8.1). */
+        const val REPARSE_LIMIT = 200
 
         /**
          * Wording that marks a message as a bank-transfer confirmation rather than an ordinary

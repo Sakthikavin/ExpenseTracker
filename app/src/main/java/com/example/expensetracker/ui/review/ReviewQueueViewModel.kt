@@ -41,7 +41,9 @@ class ReviewQueueViewModel(
      * stays in the queue — it's still unparsed on this phone until that rule lands.
      */
     fun sendForReview(rawSms: RawSmsEntity, transactionType: String, note: String) {
-        submit(rawSms, SubmissionAction.REVIEW, transactionType, note, successMessage = "Sent for review")
+        submit(rawSms, SubmissionAction.REVIEW, transactionType, note, successMessage = "Sent for review") {
+            smsRepository.markSubmitted(rawSms)
+        }
     }
 
     /**
@@ -59,11 +61,15 @@ class ReviewQueueViewModel(
         transactionType: String?,
         note: String?,
         successMessage: String,
+        onSent: suspend () -> Unit = {},
     ) {
         val repository = submissionRepository ?: return
         viewModelScope.launch {
             _submissionMessage.value = when (val result = repository.submit(rawSms.sender, rawSms.body, action, transactionType, note)) {
-                SubmissionResult.Sent -> successMessage
+                SubmissionResult.Sent -> {
+                    onSent()
+                    successMessage
+                }
                 is SubmissionResult.Blocked ->
                     "Not sent — the message still shows ${result.hints.joinToString(" and ")} after redaction"
                 SubmissionResult.Failed -> "Couldn't reach the server — try again later"

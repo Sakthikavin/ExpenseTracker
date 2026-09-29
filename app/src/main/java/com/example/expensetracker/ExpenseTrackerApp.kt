@@ -26,7 +26,7 @@ class ExpenseTrackerApp : Application() {
         scheduleBillReminders()
         scheduleRemoteRuleSync()
         // On-launch check, capped to once per 24h inside the repository itself (§8.1).
-        applicationScope.launch { container.remoteRulesRepository.syncIfDue() }
+        applicationScope.launch { container.ruleSyncCoordinator.syncIfDue() }
         repairSmsDatesOnce()
     }
 

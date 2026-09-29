@@ -40,7 +40,7 @@ import kotlinx.coroutines.launch
         OwnAccountEntity::class,
         MerchantCategoryRuleEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -65,7 +65,7 @@ abstract class AppDatabase : RoomDatabase() {
         private fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "expense_tracker.db")
                 .addCallback(SeedCallback(context.applicationContext))
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build()
 
         /**
@@ -172,6 +172,13 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS index_merchant_category_rules_categoryId " +
                         "ON merchant_category_rules (categoryId)",
                 )
+            }
+        }
+
+        /** v5 → v6: remembers that a message's template was already sent off for a rule. */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE raw_sms ADD COLUMN submittedAt INTEGER")
             }
         }
 

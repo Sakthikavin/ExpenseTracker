@@ -17,6 +17,10 @@ interface RawSmsDao {
     @Query("SELECT * FROM raw_sms WHERE id = :id")
     suspend fun getById(id: Long): RawSmsEntity?
 
+    /** Most recent first, so a capped re-parse looks at the messages a new rule is likeliest about. */
+    @Query("SELECT * FROM raw_sms WHERE parseStatus = :status ORDER BY receivedAt DESC LIMIT :limit")
+    suspend fun getByStatus(status: ParseStatus, limit: Int): List<RawSmsEntity>
+
     /**
      * Returns -1 when the unique (sender, body, receivedAt) index rejects the row as a duplicate,
      * which is how [com.example.expensetracker.data.repository.SmsRepository] detects a redelivered

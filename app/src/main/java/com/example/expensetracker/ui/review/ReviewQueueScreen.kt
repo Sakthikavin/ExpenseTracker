@@ -314,10 +314,21 @@ private fun ReviewCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 12.dp),
                 )
-                TextButton(onClick = onSubmit, modifier = Modifier.padding(top = 4.dp)) {
-                    Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Send for a rule")
+                if (rawSms.submittedAt == null) {
+                    TextButton(onClick = onSubmit, modifier = Modifier.padding(top = 4.dp)) {
+                        Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Send for a rule")
+                    }
+                } else {
+                    // Still unparsed here until a rule comes back, so the row stays — but asking
+                    // again would only add a duplicate to the console's inbox.
+                    Text(
+                        "Sent for a rule on ${formatDate(rawSms.submittedAt)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
                 }
             }
         }

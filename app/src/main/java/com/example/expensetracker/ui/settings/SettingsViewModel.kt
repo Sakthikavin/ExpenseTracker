@@ -6,9 +6,10 @@ import android.provider.Telephony
 import androidx.core.content.edit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.expensetracker.data.remoterules.RemoteRulesRepository
+import com.example.expensetracker.data.remoterules.RuleSyncCoordinator
 import com.example.expensetracker.data.remoterules.RuleSyncResult
 import com.example.expensetracker.data.repository.IngestResult
+import com.example.expensetracker.data.repository.ReparseOutcome
 import com.example.expensetracker.data.repository.SmsRepository
 import com.example.expensetracker.data.sms.SmsParser
 import kotlinx.coroutines.Dispatchers
@@ -41,7 +42,7 @@ data class RuleUpdateState(
 
 class SettingsViewModel(
     private val smsRepository: SmsRepository,
-    private val remoteRulesRepository: RemoteRulesRepository,
+    private val ruleSyncCoordinator: RuleSyncCoordinator,
 ) : ViewModel() {
 
     private val _importProgress = MutableStateFlow(ImportProgress())
@@ -63,8 +64,8 @@ class SettingsViewModel(
      */
     fun loadRuleUpdateState() {
         _ruleUpdateState.value = _ruleUpdateState.value.copy(
-            version = remoteRulesRepository.cachedVersion,
-            lastCheckedAtMillis = remoteRulesRepository.lastCheckedAtMillis,
+            version = ruleSyncCoordinator.cachedVersion,
+            lastCheckedAtMillis = ruleSyncCoordinator.lastCheckedAtMillis,
         )
     }
 
@@ -133,22 +134,32 @@ class SettingsViewModel(
         if (_ruleUpdateState.value.isChecking) return
         viewModelScope.launch {
             _ruleUpdateState.value = _ruleUpdateState.value.copy(isChecking = true, message = null)
-            val message = when (val result = remoteRulesRepository.sync()) {
+            val outcome = ruleSyncCoordinator.sync()
+            val message = when (val result = outcome.result) {
                 is RuleSyncResult.UpToDate -> "Already up to date (v${result.version})"
                 is RuleSyncResult.Updated -> {
                     val ruleWord = if (result.newRuleCount == 1) "rule" else "rules"
-                    "Updated to v${result.toVersion} — ${result.newRuleCount} new $ruleWord."
+                    "Updated to v${result.toVersion} — ${result.newRuleCount} new $ruleWord." +
+                        reparseSummary(outcome.reparse)
                 }
                 RuleSyncResult.Failed -> "Couldn't reach the rules server. Try again later."
             }
             _ruleUpdateState.value = RuleUpdateState(
-                version = remoteRulesRepository.cachedVersion,
-                lastCheckedAtMillis = remoteRulesRepository.lastCheckedAtMillis,
+                version = ruleSyncCoordinator.cachedVersion,
+                lastCheckedAtMillis = ruleSyncCoordinator.lastCheckedAtMillis,
                 isChecking = false,
                 message = message,
             )
         }
     }
+
+    /** The half of §8.2's message that reports what the new rules did to the existing queue. */
+    private fun reparseSummary(reparse: ReparseOutcome?): String = when {
+        reparse == null || reparse.checked == 0 -> ""
+        else -> " Re-checked ${reparse.checked} pending ${"message".plural(reparse.checked)}, cleared ${reparse.cleared}."
+    }
+
+    private fun String.plural(count: Int) = if (count == 1) this else this + "s"
 
     private fun readInbox(contentResolver: ContentResolver): List<InboxMessage> {
         val projection = arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE)
