@@ -5,6 +5,7 @@ import com.example.expensetracker.BuildConfig
 import com.example.expensetracker.data.local.AppDatabase
 import com.example.expensetracker.data.remoterules.RemoteRulesApi
 import com.example.expensetracker.data.remoterules.RemoteRulesRepository
+import com.example.expensetracker.data.remoterules.SubmissionRepository
 import com.example.expensetracker.data.repository.BillRepository
 import com.example.expensetracker.data.repository.BudgetRepository
 import com.example.expensetracker.data.repository.CategoryRepository
@@ -47,6 +48,13 @@ class AppContainer(context: Context) {
             baseUrl = BuildConfig.FIRESTORE_BASE_URL,
         ),
         prefs = prefs,
+    )
+
+    val submissionRepository = SubmissionRepository(
+        projectId = BuildConfig.FIRESTORE_PROJECT_ID,
+        baseUrl = BuildConfig.FIRESTORE_BASE_URL,
+        appVersion = BuildConfig.VERSION_NAME,
+        rulesVersion = { remoteRulesRepository.cachedVersion },
     )
 
     private val smsParser = SmsParser(

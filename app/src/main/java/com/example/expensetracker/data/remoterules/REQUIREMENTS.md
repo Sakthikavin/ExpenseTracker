@@ -343,8 +343,13 @@ the same way:
 - **M1** — Pull + apply: fetch `rules/current`, cache, insert into parse order, manual
   "Check now" button. No submission yet — ships value (your hand-curated rules reach every
   phone) before the upload half exists.
-- **M2** — Submission: redaction, the review/discard sheets, upload to `/submissions`.
-- **M3** — Backlog re-parse on sync, submitted-state tracking so rows aren't re-prompted.
+- **M2** — Submission: redaction, the review/discard sheets, upload to `/submissions`. **Built.**
+  `/submissions` allows an unauthenticated create (see the console's `firestore.rules`), so the
+  upload is a plain REST POST — anonymous auth is only needed for §8.3's `/devices/{uid}` write,
+  which hasn't shipped yet.
+- **M3** — **Next.** Backlog re-parse on sync, and submitted-state tracking so rows aren't
+  re-prompted (needs a column on `RawSmsEntity`, so a Room migration) — today the same message can
+  be sent twice.
 - **M4** — Web console (separate repo, `expense-tracker-rules-console`). **Built.** Covers:
   inbox, rule editor/tester, rules page, publish with diff and impact check, history/rollback,
   and a devices page that shows sample data until §8.3 ships on the Android side.

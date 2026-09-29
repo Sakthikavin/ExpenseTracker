@@ -13,14 +13,20 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Inbox
@@ -34,6 +40,8 @@ import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
@@ -50,8 +58,10 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import com.example.expensetracker.data.local.entity.CategoryEntity
 import com.example.expensetracker.data.local.entity.Direction
 import com.example.expensetracker.data.local.entity.RawSmsEntity
+import com.example.expensetracker.data.remoterules.Redactor
 import com.example.expensetracker.ui.common.CategorizePrompt
 import com.example.expensetracker.ui.common.CategorizePromptBar
 import com.example.expensetracker.ui.common.CategoryBadge
@@ -83,12 +94,19 @@ import kotlinx.coroutines.launch
 fun ReviewQueueScreen() {
     val container = LocalAppContainer.current
     val viewModel = appViewModel {
-        ReviewQueueViewModel(container.smsRepository, container.categoryRepository, container.merchantCategoryRuleRepository)
+        ReviewQueueViewModel(
+            container.smsRepository,
+            container.categoryRepository,
+            container.merchantCategoryRuleRepository,
+            container.submissionRepository,
+        )
     }
     val needsReview by viewModel.needsReview.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val categorizePrompt by viewModel.categorizePrompt.collectAsState()
+    val submissionMessage by viewModel.submissionMessage.collectAsState()
     var selected by remember { mutableStateOf<RawSmsEntity?>(null) }
+    var submitting by remember { mutableStateOf<RawSmsEntity?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -111,6 +129,13 @@ fun ReviewQueueScreen() {
         }
     }
 
+    LaunchedEffect(submissionMessage) {
+        submissionMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearSubmissionMessage()
+        }
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -129,6 +154,7 @@ fun ReviewQueueScreen() {
                             rawSms = rawSms,
                             onConfirm = { selected = rawSms },
                             onDismiss = { dismissWithUndo(rawSms) },
+                            onSubmit = { submitting = rawSms },
                         )
                     }
                 }
@@ -153,6 +179,21 @@ fun ReviewQueueScreen() {
                 )
             }
         }
+    }
+
+    submitting?.let { rawSms ->
+        SubmitForRuleSheet(
+            rawSms = rawSms,
+            onDismiss = { submitting = null },
+            onSendForReview = { transactionType, note ->
+                viewModel.sendForReview(rawSms, transactionType, note)
+                submitting = null
+            },
+            onReportNoise = { reason ->
+                viewModel.discardAsNoise(rawSms, reason)
+                submitting = null
+            },
+        )
     }
 
     selected?.let { rawSms ->
@@ -208,6 +249,7 @@ private fun ReviewCard(
     rawSms: RawSmsEntity,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val dismissState = rememberSwipeToDismissBoxState()
@@ -272,6 +314,11 @@ private fun ReviewCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 12.dp),
                 )
+                TextButton(onClick = onSubmit, modifier = Modifier.padding(top = 4.dp)) {
+                    Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Send for a rule")
+                }
             }
         }
     }
@@ -331,6 +378,115 @@ private fun SenderAvatar(sender: String, modifier: Modifier = Modifier) {
             color = Color.White,
             fontWeight = FontWeight.Bold,
         )
+    }
+}
+
+private val TRANSACTION_TYPES = listOf(
+    "UPI" to "upi",
+    "NEFT/IMPS" to "neft_imps",
+    "Card" to "card",
+    "ATM" to "atm",
+    "Auto-debit" to "auto_debit",
+    "Other" to "other",
+)
+
+private val DISCARD_REASONS = listOf("OTP", "Promo", "Balance-only notice", "Not a transaction", "Other")
+
+/**
+ * The upload half of the remote-rules loop (REQUIREMENTS §7): either "this is a transaction my
+ * phone couldn't read, please write a rule" or "this sender is noise, please mute it". Shows the
+ * redacted template so it's obvious what actually leaves the device.
+ */
+@Composable
+private fun SubmitForRuleSheet(
+    rawSms: RawSmsEntity,
+    onDismiss: () -> Unit,
+    onSendForReview: (transactionType: String, note: String) -> Unit,
+    onReportNoise: (reason: String) -> Unit,
+) {
+    var isNoise by remember { mutableStateOf(false) }
+    var transactionType by remember { mutableStateOf(TRANSACTION_TYPES.first().second) }
+    var reason by remember { mutableStateOf(DISCARD_REASONS.first()) }
+    var note by remember { mutableStateOf("") }
+    val template = remember(rawSms.body) { Redactor.redact(rawSms.body) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                // Without these the send button sits under the gesture nav bar (and behind the
+                // keyboard once the note field has focus), where taps never reach it.
+                .imePadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Send for a rule", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Only this redacted shape is uploaded — no amounts, account numbers or balances.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                template,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(12.dp),
+            )
+
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = !isNoise,
+                    onClick = { isNoise = false },
+                    shape = SegmentedButtonDefaults.itemShape(0, 2),
+                ) { Text("Needs a rule") }
+                SegmentedButton(
+                    selected = isNoise,
+                    onClick = { isNoise = true },
+                    shape = SegmentedButtonDefaults.itemShape(1, 2),
+                ) { Text("Not a transaction") }
+            }
+
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (isNoise) {
+                    DISCARD_REASONS.forEach { option ->
+                        FilterChip(
+                            selected = reason == option,
+                            onClick = { reason = option },
+                            label = { Text(option) },
+                        )
+                    }
+                } else {
+                    TRANSACTION_TYPES.forEach { (label, wire) ->
+                        FilterChip(
+                            selected = transactionType == wire,
+                            onClick = { transactionType = wire },
+                            label = { Text(label) },
+                        )
+                    }
+                }
+            }
+
+            if (!isNoise) {
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it.take(200) },
+                    label = { Text("Note (optional)") },
+                    placeholder = { Text("e.g. UPI payment to a shop") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            Button(
+                onClick = { if (isNoise) onReportNoise(reason) else onSendForReview(transactionType, note) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (isNoise) "Report as noise" else "Send for review") }
+        }
     }
 }
 

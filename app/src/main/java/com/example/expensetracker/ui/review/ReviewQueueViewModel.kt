@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.expensetracker.data.local.entity.CategoryEntity
 import com.example.expensetracker.data.local.entity.Direction
 import com.example.expensetracker.data.local.entity.RawSmsEntity
+import com.example.expensetracker.data.remoterules.SubmissionAction
+import com.example.expensetracker.data.remoterules.SubmissionRepository
+import com.example.expensetracker.data.remoterules.SubmissionResult
 import com.example.expensetracker.data.repository.CategoryRepository
 import com.example.expensetracker.data.repository.MerchantCategoryRuleRepository
 import com.example.expensetracker.data.repository.SmsRepository
@@ -25,7 +28,52 @@ class ReviewQueueViewModel(
     private val smsRepository: SmsRepository,
     categoryRepository: CategoryRepository,
     private val merchantCategoryRuleRepository: MerchantCategoryRuleRepository? = null,
+    private val submissionRepository: SubmissionRepository? = null,
 ) : ViewModel() {
+
+    private val _submissionMessage = MutableStateFlow<String?>(null)
+
+    /** Outcome of the most recent upload, for the screen to surface in a snackbar. */
+    val submissionMessage: StateFlow<String?> = _submissionMessage.asStateFlow()
+
+    /**
+     * "Send for review": uploads the redacted template so a rule can be written for it. The row
+     * stays in the queue — it's still unparsed on this phone until that rule lands.
+     */
+    fun sendForReview(rawSms: RawSmsEntity, transactionType: String, note: String) {
+        submit(rawSms, SubmissionAction.REVIEW, transactionType, note, successMessage = "Sent for review")
+    }
+
+    /**
+     * "Not a transaction": uploads the template so this sender/shape can be added to
+     * `discardSenders`, and hides the row locally right away rather than waiting for that.
+     */
+    fun discardAsNoise(rawSms: RawSmsEntity, reason: String) {
+        submit(rawSms, SubmissionAction.DISCARD, transactionType = null, note = reason, successMessage = "Reported as noise")
+        viewModelScope.launch { smsRepository.dismissReview(rawSms) }
+    }
+
+    private fun submit(
+        rawSms: RawSmsEntity,
+        action: SubmissionAction,
+        transactionType: String?,
+        note: String?,
+        successMessage: String,
+    ) {
+        val repository = submissionRepository ?: return
+        viewModelScope.launch {
+            _submissionMessage.value = when (val result = repository.submit(rawSms.sender, rawSms.body, action, transactionType, note)) {
+                SubmissionResult.Sent -> successMessage
+                is SubmissionResult.Blocked ->
+                    "Not sent — the message still shows ${result.hints.joinToString(" and ")} after redaction"
+                SubmissionResult.Failed -> "Couldn't reach the server — try again later"
+            }
+        }
+    }
+
+    fun clearSubmissionMessage() {
+        _submissionMessage.value = null
+    }
 
     private val _categorizePrompt = MutableStateFlow<CategorizePrompt?>(null)
 
