@@ -97,6 +97,21 @@ jobs:
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: ./gradlew assembleRelease
 
+      # A build that loses the signing config doesn't fail — AGP falls back to a debug keystore it
+      # generates on the spot, and the APK ships looking fine until a phone refuses to install it
+      # over the last one. So assert the signer before anything is published.
+      - name: Verify the APK carries the release signing key
+        env:
+          EXPECTED_SIGNER_SHA256: fa2d9d46812d3bcadd2622aaaa3feb3aeafe9769735c94aea75939e23f5aba60
+        run: |
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          certs=$("$apksigner" verify --print-certs app/build/outputs/apk/release/expense-tracker.apk)
+          echo "$certs"
+          if ! echo "$certs" | grep -qi "$EXPECTED_SIGNER_SHA256"; then
+            echo "::error::APK is not signed with the release key — refusing to publish it."
+            exit 1
+          fi
+
       - name: Resolve release tag
         id: tag
         run: |

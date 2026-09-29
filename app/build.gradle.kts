@@ -41,14 +41,19 @@ android {
     // Release signing comes from the environment (CI secrets, or a local export) rather than a
     // checked-in keystore. Without it the release variant stays unsigned and only `assembleRelease`
     // is affected — debug builds and the test tasks don't care.
-    val keystorePath = System.getenv("RELEASE_KEYSTORE_PATH")
+    // providers.environmentVariable, never System.getenv: the latter reads the *daemon's*
+    // environment, and CI reuses a daemon started by an earlier step that had none of these set —
+    // the signing config then silently vanished and AGP fell back to a generated debug keystore.
+    fun env(name: String) = providers.environmentVariable(name).orNull
+
+    val keystorePath = env("RELEASE_KEYSTORE_PATH")
     signingConfigs {
         if (keystorePath != null) {
             create("release") {
                 storeFile = file(keystorePath)
-                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
-                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+                storePassword = env("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = env("RELEASE_KEY_ALIAS")
+                keyPassword = env("RELEASE_KEY_PASSWORD")
             }
         }
     }
