@@ -56,6 +56,9 @@ class TransactionRepository(private val transactionDao: TransactionDao) {
 
     suspend fun update(transaction: TransactionEntity) = transactionDao.update(transaction)
 
+    /** @see com.example.expensetracker.data.local.dao.TransactionDao.findDatedAfterTheirSms */
+    suspend fun findDatedAfterTheirSms(toleranceMillis: Long) = transactionDao.findDatedAfterTheirSms(toleranceMillis)
+
     suspend fun delete(id: Long) = transactionDao.delete(id)
 
     /** @see com.example.expensetracker.data.local.dao.TransactionDao.observeMerchantCounts */

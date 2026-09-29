@@ -27,6 +27,21 @@ class ExpenseTrackerApp : Application() {
         scheduleRemoteRuleSync()
         // On-launch check, capped to once per 24h inside the repository itself (§8.1).
         applicationScope.launch { container.remoteRulesRepository.syncIfDue() }
+        repairSmsDatesOnce()
+    }
+
+    /**
+     * Transactions ingested before [com.example.expensetracker.data.sms.SmsDateParser.plausibleOccurredAt]
+     * existed can carry a date read out of the wrong part of the message — a December message filed
+     * a year ahead, say. Runs once per install; the flag is what stops it re-scanning every launch.
+     */
+    private fun repairSmsDatesOnce() {
+        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        if (prefs.getBoolean(PREF_SMS_DATE_REPAIR_DONE, false)) return
+        applicationScope.launch {
+            container.smsRepository.repairDatesAheadOfTheirSms()
+            prefs.edit().putBoolean(PREF_SMS_DATE_REPAIR_DONE, true).apply()
+        }
     }
 
     private fun scheduleBillReminders() {
@@ -45,5 +60,9 @@ class ExpenseTrackerApp : Application() {
             ExistingPeriodicWorkPolicy.KEEP,
             request,
         )
+    }
+
+    private companion object {
+        const val PREF_SMS_DATE_REPAIR_DONE = "sms_date_repair_done"
     }
 }

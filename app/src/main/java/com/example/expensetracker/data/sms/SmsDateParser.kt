@@ -1,5 +1,7 @@
 package com.example.expensetracker.data.sms
 
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
 import kotlinx.datetime.Instant
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
@@ -100,6 +102,23 @@ object SmsDateParser {
         if (hour !in 0..23 || minute !in 0..59 || second !in 0..59) return null
         return Triple(hour, minute, second)
     }
+
+    /**
+     * The date to record for a message received at [receivedAt], given whatever [parse] read out of
+     * its body.
+     *
+     * A bank can only tell you about a payment after it happened, so a body date later than the
+     * message's own arrival means the parser latched onto something that isn't the transaction date
+     * — an EMI due date, a statement period, a "convert to EMI before" deadline. The arrival time is
+     * the better answer then, and it's the one piece of timing the phone records itself.
+     *
+     * [FUTURE_TOLERANCE] absorbs the honest cases: a bank writing a date in its own timezone, or a
+     * message sent either side of midnight.
+     */
+    fun plausibleOccurredAt(parsed: Instant?, receivedAt: Instant): Instant =
+        parsed?.takeIf { it <= receivedAt.plus(FUTURE_TOLERANCE) } ?: receivedAt
+
+    val FUTURE_TOLERANCE: Duration = 1.days
 
     /** Bank SMS write two-digit years; nothing here predates 2000. */
     private fun expandYear(year: Int): Int = if (year < 100) 2000 + year else year

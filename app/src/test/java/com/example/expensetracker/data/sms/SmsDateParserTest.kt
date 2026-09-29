@@ -95,4 +95,31 @@ class SmsDateParserTest {
             12,
             20,
         )
+
+    private fun instant(y: Int, mo: Int, d: Int, h: Int = 12) = LocalDateTime(y, mo, d, h, 0).toInstant(zone)
+
+    @Test
+    fun `keeps a body date that precedes the message`() {
+        val body = instant(2025, 12, 20)
+        assertEquals(body, SmsDateParser.plausibleOccurredAt(body, receivedAt = instant(2025, 12, 21)))
+    }
+
+    /** The bug this guards: a body date read out of the wrong token, filing a message a year ahead. */
+    @Test
+    fun `falls back to arrival when the body date is in the message's future`() {
+        val receivedAt = instant(2025, 12, 20)
+        assertEquals(receivedAt, SmsDateParser.plausibleOccurredAt(instant(2026, 12, 20), receivedAt))
+    }
+
+    @Test
+    fun `tolerates a body date slightly ahead of arrival`() {
+        val body = instant(2025, 12, 20, h = 23)
+        assertEquals(body, SmsDateParser.plausibleOccurredAt(body, receivedAt = instant(2025, 12, 20, h = 1)))
+    }
+
+    @Test
+    fun `falls back to arrival when the body carries no date`() {
+        val receivedAt = instant(2025, 12, 20)
+        assertEquals(receivedAt, SmsDateParser.plausibleOccurredAt(null, receivedAt))
+    }
 }

@@ -80,7 +80,7 @@ class SmsRepository(
                     direction = outcome.parsed.direction,
                     merchant = outcome.parsed.merchant,
                     rawSmsId = rawSmsId,
-                    occurredAt = outcome.parsed.occurredAt ?: receivedAt,
+                    occurredAt = SmsDateParser.plausibleOccurredAt(outcome.parsed.occurredAt, receivedAt),
                     categoryId = ruleCategoryId,
                     accountLabel = outcome.parsed.accountLabel,
                     referenceId = outcome.parsed.referenceId,
@@ -157,7 +157,7 @@ class SmsRepository(
     ): CategorizeOutcome {
         // The message's own date if it has one, else when we received it — never "now", which
         // would date a message confirmed days later to the day it was confirmed.
-        val occurredAt = SmsDateParser.parse(rawSms.body) ?: rawSms.receivedAt
+        val occurredAt = SmsDateParser.plausibleOccurredAt(SmsDateParser.parse(rawSms.body), rawSms.receivedAt)
         val existing = rawSms.linkedTransactionId?.let { transactionRepository.getById(it) }
         val transactionId = if (existing != null) {
             transactionRepository.update(
@@ -194,6 +194,27 @@ class SmsRepository(
         } else {
             CategorizeOutcome.Applied
         }
+    }
+
+    /**
+     * Re-dates SMS transactions that a misread body date pushed past the arrival of the message
+     * reporting them — see [SmsDateParser.plausibleOccurredAt]. A one-off repair for rows written
+     * before that check existed; the parse is redone from the stored body, so a row whose date was
+     * merely late (not wrong) keeps it.
+     *
+     * @return how many transactions were corrected.
+     */
+    suspend fun repairDatesAheadOfTheirSms(): Int {
+        var corrected = 0
+        for (transaction in transactionRepository.findDatedAfterTheirSms(SmsDateParser.FUTURE_TOLERANCE.inWholeMilliseconds)) {
+            val rawSms = transaction.rawSmsId?.let { rawSmsDao.getById(it) } ?: continue
+            val occurredAt = SmsDateParser.plausibleOccurredAt(SmsDateParser.parse(rawSms.body), rawSms.receivedAt)
+            if (occurredAt != transaction.occurredAt) {
+                transactionRepository.update(transaction.copy(occurredAt = occurredAt))
+                corrected++
+            }
+        }
+        return corrected
     }
 
     /** Manual dismissal from the "needs review" queue; creates no transaction. */
@@ -284,7 +305,8 @@ class SmsRepository(
         receivedAt: Instant,
     ): TransactionEntity? {
         if (!TRANSFER_WORDING.containsMatchIn(body)) return null
-        val day = (parsed.occurredAt ?: receivedAt).toLocalDateTime(TimeZone.currentSystemDefault()).date
+        val day = SmsDateParser.plausibleOccurredAt(parsed.occurredAt, receivedAt)
+            .toLocalDateTime(TimeZone.currentSystemDefault()).date
         val zone = TimeZone.currentSystemDefault()
         return transactionRepository.findOppositeCounterpart(
             amountMinor = parsed.amountMinor,

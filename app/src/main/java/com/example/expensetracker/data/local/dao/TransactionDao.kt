@@ -132,6 +132,20 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE id = :id")
     suspend fun getById(id: Long): TransactionEntity?
 
+    /**
+     * SMS transactions dated later than the message that reported them, beyond [toleranceMillis] —
+     * i.e. rows a misread body date pushed into the future. Both columns are epoch millis, so the
+     * comparison is plain arithmetic.
+     */
+    @Query(
+        """
+        SELECT t.* FROM transactions t
+        JOIN raw_sms r ON t.rawSmsId = r.id
+        WHERE t.occurredAt > r.receivedAt + :toleranceMillis
+        """,
+    )
+    suspend fun findDatedAfterTheirSms(toleranceMillis: Long): List<TransactionEntity>
+
     @Query("SELECT * FROM transactions WHERE transferGroupId = :groupId ORDER BY direction")
     suspend fun findByTransferGroup(groupId: String): List<TransactionEntity>
 
