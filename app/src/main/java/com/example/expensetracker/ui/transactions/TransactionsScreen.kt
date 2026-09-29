@@ -18,12 +18,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -50,11 +53,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.expensetracker.data.local.entity.CategoryEntity
 import com.example.expensetracker.data.local.entity.Direction
 import com.example.expensetracker.data.local.entity.OwnAccountEntity
+import com.example.expensetracker.data.local.entity.RawSmsEntity
 import com.example.expensetracker.data.local.entity.TransactionEntity
 import com.example.expensetracker.ui.common.AddTransactionDialog
 import com.example.expensetracker.ui.common.CategorizePrompt
@@ -64,6 +71,7 @@ import com.example.expensetracker.ui.common.LocalAppContainer
 import com.example.expensetracker.ui.common.appViewModel
 import com.example.expensetracker.ui.common.formatDate
 import com.example.expensetracker.ui.common.formatDateRange
+import com.example.expensetracker.ui.common.formatDateTime
 import com.example.expensetracker.ui.common.formatMinorUnitsAsInr
 import com.example.expensetracker.ui.dashboard.DashboardPalette
 import kotlinx.datetime.LocalDate
@@ -85,6 +93,7 @@ fun TransactionsScreen(
             container.transferRepository,
             filter,
             container.merchantCategoryRuleRepository,
+            container.smsRepository,
         )
     }
     val groupedItems by viewModel.groupedItems.collectAsState()
@@ -126,6 +135,7 @@ fun TransactionsScreen(
                                         onDelete = { pendingDelete = item.transaction },
                                         onCategorySelected = { viewModel.updateCategory(item.transaction, it) },
                                         onMarkTransfer = { pendingTransferFor = item.transaction },
+                                        loadRawSms = { viewModel.rawSmsFor(item.transaction) },
                                     )
 
                                     is TransactionListItem.Transfer -> TransferRow(
@@ -313,83 +323,154 @@ private fun TransactionRow(
     onDelete: () -> Unit,
     onCategorySelected: (Long?) -> Unit,
     onMarkTransfer: () -> Unit,
+    loadRawSms: suspend () -> RawSmsEntity?,
 ) {
     var categoryMenuExpanded by remember { mutableStateOf(false) }
     var overflowExpanded by remember { mutableStateOf(false) }
+    var messageExpanded by remember { mutableStateOf(false) }
 
-    ListItem(
-        headlineContent = { Text(transaction.merchant.ifBlank { "(no merchant)" }) },
-        supportingContent = {
-            Box {
-                CategoryLabel(
-                    category = category,
-                    badgeSize = 18.dp,
-                    modifier = Modifier.clickable { categoryMenuExpanded = true },
-                )
-                DropdownMenu(
-                    expanded = categoryMenuExpanded,
-                    onDismissRequest = { categoryMenuExpanded = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { CategoryLabel(category = null) },
-                        onClick = {
-                            onCategorySelected(null)
-                            categoryMenuExpanded = false
-                        },
+    Column(modifier = Modifier.clickable { messageExpanded = !messageExpanded }) {
+        ListItem(
+            headlineContent = { Text(transaction.merchant.ifBlank { "(no merchant)" }) },
+            supportingContent = {
+                Box {
+                    CategoryLabel(
+                        category = category,
+                        badgeSize = 18.dp,
+                        modifier = Modifier.clickable { categoryMenuExpanded = true },
                     )
-                    categories.forEach { option ->
+                    DropdownMenu(
+                        expanded = categoryMenuExpanded,
+                        onDismissRequest = { categoryMenuExpanded = false },
+                    ) {
                         DropdownMenuItem(
-                            text = { CategoryLabel(category = option) },
+                            text = { CategoryLabel(category = null) },
                             onClick = {
-                                onCategorySelected(option.id)
+                                onCategorySelected(null)
                                 categoryMenuExpanded = false
                             },
                         )
+                        categories.forEach { option ->
+                            DropdownMenuItem(
+                                text = { CategoryLabel(category = option) },
+                                onClick = {
+                                    onCategorySelected(option.id)
+                                    categoryMenuExpanded = false
+                                },
+                            )
+                        }
                     }
                 }
-            }
-        },
-        trailingContent = {
-            Row {
-                val sign = if (transaction.direction == Direction.DEBIT) "-" else "+"
+            },
+            trailingContent = {
+                Row {
+                    val sign = if (transaction.direction == Direction.DEBIT) "-" else "+"
+                    Text(
+                        text = "$sign${formatMinorUnitsAsInr(transaction.amountMinor)}",
+                        // Red on every debit — most rows — drains it of meaning; plain ink reads as
+                        // ordinary spending, leaving red for actual alerts (budgets, real problems).
+                        // Credit still stands out with a leading "+" and green, since income is rarer.
+                        color = if (transaction.direction == Direction.DEBIT) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            DashboardPalette.StatusGood
+                        },
+                    )
+                    Box {
+                        IconButton(onClick = { overflowExpanded = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "More")
+                        }
+                        DropdownMenu(
+                            expanded = overflowExpanded,
+                            onDismissRequest = { overflowExpanded = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Mark as transfer") },
+                                onClick = {
+                                    overflowExpanded = false
+                                    onMarkTransfer()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete") },
+                                onClick = {
+                                    overflowExpanded = false
+                                    onDelete()
+                                },
+                            )
+                        }
+                    }
+                }
+            },
+        )
+        if (messageExpanded) {
+            OriginalMessagePanel(loadRawSms = loadRawSms)
+        }
+    }
+}
+
+/**
+ * The raw SMS a transaction was parsed from, shown inline under the row when expanded. Fetched
+ * lazily on first expand rather than for every row up front, since most rows never get opened.
+ */
+@Composable
+private fun OriginalMessagePanel(loadRawSms: suspend () -> RawSmsEntity?) {
+    var rawSms by remember { mutableStateOf<RawSmsEntity?>(null) }
+    var loaded by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        rawSms = loadRawSms()
+        loaded = true
+    }
+    val clipboard = LocalClipboardManager.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        when {
+            !loaded -> Text(
+                "Loading original message…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            rawSms == null -> Text(
+                "No original message — added manually",
+                style = MaterialTheme.typography.bodySmall,
+                fontStyle = FontStyle.Italic,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            else -> {
+                val sms = rawSms!!
                 Text(
-                    text = "$sign${formatMinorUnitsAsInr(transaction.amountMinor)}",
-                    // Red on every debit — most rows — drains it of meaning; plain ink reads as
-                    // ordinary spending, leaving red for actual alerts (budgets, real problems).
-                    // Credit still stands out with a leading "+" and green, since income is rarer.
-                    color = if (transaction.direction == Direction.DEBIT) {
-                        MaterialTheme.colorScheme.onSurface
-                    } else {
-                        DashboardPalette.StatusGood
-                    },
+                    "${sms.sender} · ${formatDateTime(sms.receivedAt)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Box {
-                    IconButton(onClick = { overflowExpanded = true }) {
-                        Icon(Icons.Filled.MoreVert, contentDescription = "More")
-                    }
-                    DropdownMenu(
-                        expanded = overflowExpanded,
-                        onDismissRequest = { overflowExpanded = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Mark as transfer") },
-                            onClick = {
-                                overflowExpanded = false
-                                onMarkTransfer()
-                            },
+                Text(
+                    sms.body,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = { clipboard.setText(AnnotatedString(sms.body)) }) {
+                        Icon(
+                            Icons.Filled.ContentCopy,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
                         )
-                        DropdownMenuItem(
-                            text = { Text("Delete") },
-                            onClick = {
-                                overflowExpanded = false
-                                onDelete()
-                            },
-                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Copy")
                     }
                 }
             }
-        },
-    )
+        }
+    }
 }
 
 /**

@@ -9,7 +9,9 @@ import com.example.expensetracker.data.local.entity.OwnAccountEntity
 import com.example.expensetracker.data.local.entity.TransactionEntity
 import com.example.expensetracker.data.local.entity.TransactionSource
 import com.example.expensetracker.data.repository.CategoryRepository
+import com.example.expensetracker.data.local.entity.RawSmsEntity
 import com.example.expensetracker.data.repository.MerchantCategoryRuleRepository
+import com.example.expensetracker.data.repository.SmsRepository
 import com.example.expensetracker.data.repository.TransactionRepository
 import com.example.expensetracker.data.repository.TransferRepository
 import com.example.expensetracker.ui.common.CategorizePrompt
@@ -100,6 +102,7 @@ class TransactionsViewModel(
     private val transferRepository: TransferRepository? = null,
     val filter: TransactionFilter = TransactionFilter(),
     private val merchantCategoryRuleRepository: MerchantCategoryRuleRepository? = null,
+    private val smsRepository: SmsRepository? = null,
 ) : ViewModel() {
 
     private val _categorizePrompt = MutableStateFlow<CategorizePrompt?>(null)
@@ -151,6 +154,10 @@ class TransactionsViewModel(
     /** Plausible other legs for [transaction], best match first. */
     suspend fun transferCandidates(transaction: TransactionEntity): List<TransactionEntity> =
         transferRepository?.manualCandidates(transaction, transactions.value).orEmpty()
+
+    /** The SMS a transaction was parsed from, for "view original message" — null for manual entries. */
+    suspend fun rawSmsFor(transaction: TransactionEntity): RawSmsEntity? =
+        transaction.rawSmsId?.let { smsRepository?.getRawSmsById(it) }
 
     fun linkTransfer(first: TransactionEntity, second: TransactionEntity) {
         viewModelScope.launch { transferRepository?.link(first, second) }

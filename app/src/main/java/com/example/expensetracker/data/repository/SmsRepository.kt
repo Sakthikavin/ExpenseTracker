@@ -37,6 +37,9 @@ class SmsRepository(
 ) {
     fun observeNeedsReview(): Flow<List<RawSmsEntity>> = rawSmsDao.observeByStatus(ParseStatus.NEEDS_REVIEW)
 
+    /** The original message behind a transaction, for "view original message" on the transactions list. */
+    suspend fun getRawSmsById(id: Long): RawSmsEntity? = rawSmsDao.getById(id)
+
     /**
      * Entry point from [com.example.expensetracker.data.sms.SmsReceiver] and from the SMS history
      * importer. The [IngestResult] tells the caller which bucket this message fell into; the
