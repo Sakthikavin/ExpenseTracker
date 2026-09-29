@@ -35,13 +35,13 @@ adb devices                # should list "emulator-5554  device"
 ./gradlew :app:assembleDebug
 ```
 
-Output lands at `app/build/outputs/apk/debug/app-debug.apk`. A `BUILD SUCCESSFUL` message
+Output lands at `app/build/outputs/apk/debug/expense-tracker-debug.apk`. A `BUILD SUCCESSFUL` message
 means it compiled; any errors will print above that line.
 
 ## 3. Install it
 
 ```bash
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/expense-tracker-debug.apk
 ```
 
 `-r` reinstalls over an existing copy and **keeps existing app data** (your categories,

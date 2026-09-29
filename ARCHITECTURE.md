@@ -77,7 +77,7 @@ flowchart LR
     D -->|"generates AppDatabase_Impl,<br/>DAO SQL implementations"| E
     E --> G["DEX bytecode"]
     F --> G
-    G --> H["app-debug.apk"]
+    G --> H["expense-tracker-debug.apk"]
     H --> I["adb install<br/>or ./gradlew :app:installDebug"]
     I --> J["Running on device"]
 ```

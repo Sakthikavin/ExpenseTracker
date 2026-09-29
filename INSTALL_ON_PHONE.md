@@ -36,7 +36,7 @@ export ANDROID_HOME="$HOME/Library/Android/sdk"
 The file lands at:
 
 ```
-app/build/outputs/apk/debug/app-debug.apk
+app/build/outputs/apk/debug/expense-tracker-debug.apk
 ```
 
 A debug build is perfectly fine to sideload and use day-to-day — no need to fuss with
@@ -46,19 +46,19 @@ release signing for personal use.
 
 Pick whichever is easiest:
 
-- **Browser**: open [drive.google.com](https://drive.google.com), drag `app-debug.apk`
+- **Browser**: open [drive.google.com](https://drive.google.com), drag `expense-tracker-debug.apk`
   into a folder (e.g. a folder named "APKs").
 - **Drive desktop app**: if you have Google Drive syncing a local folder on this Mac, just
-  copy `app-debug.apk` into that synced folder — it uploads automatically:
+  copy `expense-tracker-debug.apk` into that synced folder — it uploads automatically:
   ```bash
-  cp app/build/outputs/apk/debug/app-debug.apk ~/Google\ Drive/My\ Drive/APKs/
+  cp app/build/outputs/apk/debug/expense-tracker-debug.apk ~/Google\ Drive/My\ Drive/APKs/
   ```
   (adjust the path to wherever your Drive folder actually syncs to).
 
 ### 3. Download it on your phone
 
 1. Open the **Google Drive** app on your phone.
-2. Find `app-debug.apk` and tap it.
+2. Find `expense-tracker-debug.apk` and tap it.
 3. Tap the **download** icon (⬇) in the top-right of the preview screen.
 
 ### 4. Allow installing (first time only)
