@@ -61,12 +61,17 @@ data/remoterules/
 
 New tier order inside `SmsParser.parse`:
 
-1. `BankTemplates.findMatch` (unchanged)
-2. **`RemoteRulesRepository.tryMatch`** (new) — tries cached remote rules for this sender,
+1. `ALWAYS_IGNORE_SENDERS` / `discardSenders` (unchanged)
+2. **`RemoteRulesRepository.isIgnoredMessage`** (new, see `IGNORE_RULES.md`) — a published
+   sender+pattern pair saying this *kind* of message isn't a transaction (a declined-payment
+   alert, say). Runs before any parsing tier below, so a built-in template or remote rule can't
+   still book the non-payment it describes.
+3. `BankTemplates.findMatch` (unchanged)
+4. **`RemoteRulesRepository.tryMatch`** (new) — tries cached remote rules for this sender,
    ordered by `priority` descending, same discipline as `BankTemplates.findMatch`
    (try every matching rule before giving up, don't abort on the first sender match).
-3. `LearnedPatternDao` per-device patterns (unchanged)
-4. Review queue (unchanged)
+5. `LearnedPatternDao` per-device patterns (unchanged)
+6. Review queue (unchanged)
 
 Remote rules also carry `discardSenders` — merged into `SmsParser.ALWAYS_IGNORE_SENDERS`
 at parse time, so a noisy sender you identify from one person's submissions (e.g. a new
@@ -87,11 +92,15 @@ selection has to follow this exact order:
 
 1. `normaliseSender(sender)` in `discardSenders` → treat as noise, skip remote-rule matching
    entirely.
-2. Otherwise, walk rules whose `senders` contain the normalized sender, by `priority` descending
+2. `RemoteRulesRepository.isIgnoredMessage(sender, body)` (`IGNORE_RULES.md` §3): any
+   `ignoreRules` entry whose `senders` contain the normalized sender and whose `pattern` matches
+   anywhere in the body → treat as noise. No `fieldMap` to satisfy, no `priority`; any match is
+   enough and order among ignore rules doesn't matter.
+3. Otherwise, walk rules whose `senders` contain the normalized sender, by `priority` descending
    (ties keep list order as published).
-3. The first rule that matches the body **and** yields a non-empty value for every `fieldMap`
+4. The first rule that matches the body **and** yields a non-empty value for every `fieldMap`
    group wins; a rule missing a mapped field falls through to the next candidate.
-4. Rules that fail to compile (§10) are skipped, never considered a match.
+5. Rules (and ignore rules) that fail to compile (§10) are skipped, never considered a match.
 
 Rationale for putting remote rules *before* local learned patterns: a remote rule has been
 reviewed by you against real samples and is shared infrastructure; a local learned pattern
@@ -115,15 +124,17 @@ never raw text, before anything is queued for upload. Same idea as `PatternLearn
 | Reference / UTR numbers | replaced with `<REF>` | `Ref 123456789012` → `Ref <REF>` |
 | Phone numbers | replaced with `<PHONE>` | `917036165000` → `<PHONE>` |
 | VPA / UPI handles | keep the structure, mask the handle owner | `merchant@ybl` → `<VPA>` (merchant *name* text elsewhere is kept — see below) |
+| URLs / bank short links | replaced with `<URL>`, run **first** (before date/time/ref) so digits in a link aren't half-masked into `<DATE>`/`<REF>` fragments | `Modify:https://1.hdfc.bank.in/HDFCBK/s/a/E0WMgeP0` → `Modify:<URL>` |
 | Merchant / payee name | **kept** — this is what most rules need to anchor on, and it's already a payee name the user chose to transact with, not private banking data |
 | Sender ID (`VM-FEDBNK`) | kept as-is | needed to route the rule to the right bank |
 
 ### 6.1.1 Redaction check
 
 Before upload, `Redactor` must flag (and the app must refuse to send) any template that still
-contains 5+ consecutive digits or an `x@y`-shaped handle outside the `<...>` placeholders above —
-same rule the console applies to inbound submissions. Add this as a unit test alongside the
-existing `Redactor` tests, covering both a stray digit run and a stray handle.
+contains 5+ consecutive digits, an `x@y`-shaped handle, or a raw URL/bare-domain link (`http`,
+`www.`, or a `domain.tld/`-shaped run) outside the `<...>` placeholders above — same rule the
+console applies to inbound submissions. Add this as a unit test alongside the existing `Redactor`
+tests, covering a stray digit run, a stray handle, and a stray link.
 
 ### 6.2 Worked example
 
@@ -258,6 +269,15 @@ collection is `rules` but the app only ever fetches the `current` doc. `RemoteRu
       "addedAt": "2026-09-20T00:00:00Z"
     }
   ]
+  ignoreRules: [
+    {
+      "id": "hdfcbk_txn_declined_v1",
+      "senders": ["HDFCBK"],
+      "pattern": "^TXN DECLINED: ",
+      "reason": "Declined transaction",
+      "addedAt": "2026-09-29T00:00:00Z"
+    }
+  ]
 
 /submissions/{autoId}          (write-only for clients, no client read; you read via console)
   template, sender, action, transactionType, note, appVersion, rulesVersion, submittedAt
@@ -270,6 +290,11 @@ collection is `rules` but the app only ever fetches the `current` doc. `RemoteRu
 `fieldMap` values are capture-group **numbers**, not named-group lookups — count every capturing
 group left-to-right, unnamed ones included (`(?:…)` doesn't count). In the pattern above, group 1
 is `amount`, group 2 is `account`, group 3 is `merchant`.
+
+`ignoreRules` (see `IGNORE_RULES.md` for the full spec) has no `fieldMap`, `direction` or
+`priority` — it only answers whether a message is noise, so a matching entry is enough on its
+own. The field is absent from every rule set published before it existed and must then be
+treated as an empty list, both over the wire and in the on-disk cache (§10).
 
 Security rules are Firestore, not Realtime Database. The real rules live in the console repo's
 `firestore.rules` — keep this spec in sync with it, don't hand-copy a stale snippet:
@@ -306,9 +331,15 @@ above.
 
 - Rule set cached via DataStore (`Preferences` or a small proto), keyed by `version`.
 - Regex compilation happens once per sync, not per message — compiled `Regex` objects held
-  in memory by `RemoteRulesRepository`, rebuilt only when the version changes.
+  in memory by `RemoteRulesRepository`, rebuilt only when the version changes. `ignoreRules`
+  compile alongside `rules` on the same cadence, not on their own schedule.
 - A rule whose `pattern` fails to compile (bad regex pushed by mistake) is skipped and
   logged, never crashes the parser — same defensive posture as `PatternLearner.applyToBody`.
+  `ignoreRules` entries get the same treatment, and one missing `id`/`senders`/`pattern` is
+  dropped on parse rather than failing the whole document.
+- The disk cache must read `ignoreRules` with `optJSONArray`, not `getJSONArray`: a cache
+  written before this feature existed has no such key, and the first launch after the update
+  must not throw on it.
 
 ### 10.1 Regex dialect
 

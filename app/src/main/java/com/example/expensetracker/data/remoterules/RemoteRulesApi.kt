@@ -50,7 +50,22 @@ class RemoteRulesApi(
         discardSenders = fields.fsStringArray("discardSenders"),
         rules = fields.fsArray("rules").orEmpty()
             .mapNotNull { it.optJSONObject("mapValue")?.optJSONObject("fields")?.let(::parseRule) },
+        ignoreRules = fields.fsArray("ignoreRules").orEmpty()
+            .mapNotNull { it.optJSONObject("mapValue")?.optJSONObject("fields")?.let(::parseIgnoreRule) },
     )
+
+    /** An entry missing what it needs to be applied is dropped, like [parseRule] returning null. */
+    private fun parseIgnoreRule(fields: JSONObject): RemoteIgnoreRule? {
+        val id = fields.fsString("id") ?: return null
+        val pattern = fields.fsString("pattern") ?: return null
+        val senders = fields.fsStringArray("senders").takeIf { it.isNotEmpty() } ?: return null
+        return RemoteIgnoreRule(
+            id = id,
+            senders = senders,
+            pattern = pattern,
+            reason = fields.fsString("reason").orEmpty(),
+        )
+    }
 
     private fun parseRule(fields: JSONObject): RemoteRule? {
         val pattern = fields.fsString("pattern") ?: return null

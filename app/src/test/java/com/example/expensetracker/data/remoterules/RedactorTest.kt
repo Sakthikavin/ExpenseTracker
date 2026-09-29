@@ -29,6 +29,39 @@ class RedactorTest {
     }
 
     @Test
+    fun `masks a bank short link, code and all`() {
+        val template = Redactor.redact(
+            "TXN DECLINED: Rs.500 on 29-09-26 at 19:00 on HDFC Bank Debit Card xx1234. " +
+                "Reason: Online set Limit Exceeded. Modify:https://1.hdfc.bank.in/HDFCBK/s/a/E0WMgeP0",
+        )
+
+        assertTrue(template, template.endsWith("Modify:<URL>"))
+        assertEquals(emptyList<String>(), Redactor.unredactedHints(template))
+    }
+
+    @Test
+    fun `masks a bare domain link with no scheme`() {
+        val template = Redactor.redact("Not you? Visit 1.hdfc.bank.in/HDFCBK/s/a/E0WMgeP0 to block")
+
+        assertTrue(template, template.contains("<URL>"))
+        assertEquals(emptyList<String>(), Redactor.unredactedHints(template))
+    }
+
+    /** The spec's looser bare-domain pattern would swallow this; a letters-only TLD is what saves it. */
+    @Test
+    fun `leaves a decimal amount followed by a slash alone`() {
+        val template = Redactor.redact("Avl Bal Rs.1234.56/- after txn")
+
+        assertTrue(template, template.contains("<BAL>"))
+        assertTrue(template, !template.contains("<URL>"))
+    }
+
+    @Test
+    fun `flags a raw link left behind`() {
+        assertEquals(listOf("a link"), Redactor.unredactedHints("Blocked. Modify:https://1.hdfc.bank.in/s/a/E0WMgeP0"))
+    }
+
+    @Test
     fun `flags a stray digit run left behind`() {
         assertEquals(listOf("a long number"), Redactor.unredactedHints("Rs.<AMT> debited from A/c 123456789 to <VPA>"))
     }

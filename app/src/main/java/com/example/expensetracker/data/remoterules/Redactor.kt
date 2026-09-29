@@ -13,7 +13,17 @@ object Redactor {
      * Applied in order — later rules only see what earlier ones left behind, which is what keeps a
      * bare number run from swallowing the tail of a date or a reference number.
      */
+    /**
+     * Bank short links carry a per-customer code (`…/HDFCBK/s/a/E0WMgeP0`), so they identify the
+     * person as surely as an account number. Requiring a letters-only TLD before the path is what
+     * keeps this off `Avl Bal 1234.56/…`; the spec's looser `[a-z0-9-]+` last label would eat it.
+     */
+    private val URL = Regex("""(?i)\b(?:https?://|www\.)\S+|(?i)\b(?:[a-z0-9-]+\.)+[a-z]{2,}/\S*""")
+
     private val RULES: List<Pair<Regex, (MatchResult) -> String>> = listOf(
+        // First, so digits inside a link can't be half-masked into <DATE> or <REF> fragments.
+        URL to { "<URL>" },
+
         // Balance: the whole phrase goes, not just the number — "Avl Bal Rs.15,342.50" is as
         // identifying as the account number it follows.
         Regex("""(?i)\b((?:avl|available|closing|updated)?\s*(?:bal|balance)\b[^\d]{0,12}?)(?:rs\.?|inr)?\s*[\d,]+(?:\.\d{1,2})?""") to
@@ -57,6 +67,7 @@ object Redactor {
         return buildList {
             if (Regex("""\d{5,}""").containsMatchIn(plain)) add("a long number")
             if (Regex("""[\w.\-]+@[\w.\-]+""").containsMatchIn(plain)) add("an email or UPI handle")
+            if (Regex("""(?i)https?://|www\.""").containsMatchIn(plain) || URL.containsMatchIn(plain)) add("a link")
         }
     }
 }

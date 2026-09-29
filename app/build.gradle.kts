@@ -116,6 +116,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.datetime)
     testImplementation(libs.junit)
+    // Real org.json on the unit-test classpath: android.jar's org.json is a throwing stub outside
+    // instrumented tests, and RemoteRulesRepository/RemoteRulesApi parse real JSON in plain JVM tests.
+    testImplementation(libs.org.json)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)

@@ -20,6 +20,8 @@ sealed interface RuleSyncResult {
 
 private data class CompiledRule(val rule: RemoteRule, val regex: Regex)
 
+private data class CompiledIgnoreRule(val rule: RemoteIgnoreRule, val regex: Regex)
+
 /**
  * Caches the published remote rule set (REQUIREMENTS.md §9/§10) and applies it as tier 2 of
  * `SmsParser.parse` (§5). One instance lives for the app's lifetime — see
@@ -37,6 +39,9 @@ class RemoteRulesRepository(
 
     @Volatile
     private var compiled: List<CompiledRule> = emptyList()
+
+    @Volatile
+    private var compiledIgnores: List<CompiledIgnoreRule> = emptyList()
 
     init {
         loadFromDisk()?.let { setCache(it) }
@@ -72,6 +77,18 @@ class RemoteRulesRepository(
     /** §5.2 step 1: a normalized sender in `discardSenders` is noise, not just unmatched. */
     fun isDiscardedSender(sender: String): Boolean =
         PatternLearner.normaliseSender(sender) in cached?.discardSenders.orEmpty()
+
+    /**
+     * Step 3 of `SmsParser.parse` (IGNORE_RULES.md §3): a published pattern saying this *kind* of
+     * message from this sender isn't a transaction — a declined-payment alert, say.
+     *
+     * Runs before any parsing tier, so a built-in template can't book the non-payment it describes.
+     * Any match is enough; no capture groups are read and order doesn't matter.
+     */
+    fun isIgnoredMessage(sender: String, body: String): Boolean {
+        val normalized = PatternLearner.normaliseSender(sender)
+        return compiledIgnores.any { normalized in it.rule.senders && it.regex.containsMatchIn(body) }
+    }
 
     /**
      * Tier 2 of `SmsParser.parse` (§5). Follows the console's exact prediction order (§5.2): rules
@@ -111,6 +128,9 @@ class RemoteRulesRepository(
         compiled = set.rules.mapNotNull { rule ->
             runCatching { Regex(rule.pattern) }.getOrNull()?.let { CompiledRule(rule, it) }
         }
+        compiledIgnores = set.ignoreRules.mapNotNull { rule ->
+            runCatching { Regex(rule.pattern) }.getOrNull()?.let { CompiledIgnoreRule(rule, it) }
+        }
     }
 
     private fun saveToDisk(set: RemoteRuleSet) {
@@ -129,6 +149,19 @@ class RemoteRulesRepository(
                             put("pattern", rule.pattern)
                             put("fieldMap", JSONObject(rule.fieldMap))
                             put("priority", rule.priority)
+                        }
+                    },
+                ),
+            )
+            put(
+                "ignoreRules",
+                JSONArray(
+                    set.ignoreRules.map { rule ->
+                        JSONObject().apply {
+                            put("id", rule.id)
+                            put("senders", JSONArray(rule.senders))
+                            put("pattern", rule.pattern)
+                            put("reason", rule.reason)
                         }
                     },
                 ),
@@ -158,6 +191,19 @@ class RemoteRulesRepository(
                         priority = r.optInt("priority", 0),
                     )
                 },
+                // optJSONArray, not getJSONArray: a cache written before ignore rules existed has
+                // no such key, and the first launch after the update must not throw on it.
+                ignoreRules = json.optJSONArray("ignoreRules")?.let { array ->
+                    (0 until array.length()).mapNotNull { i ->
+                        val r = array.getJSONObject(i)
+                        RemoteIgnoreRule(
+                            id = r.optString("id"),
+                            senders = r.optJSONArray("senders")?.toStringList().orEmpty(),
+                            pattern = r.optString("pattern"),
+                            reason = r.optString("reason"),
+                        ).takeIf { it.id.isNotEmpty() && it.pattern.isNotEmpty() && it.senders.isNotEmpty() }
+                    }
+                }.orEmpty(),
             )
         }.getOrNull()
     }

@@ -20,6 +20,10 @@ class SmsParser(
         // discardSenders from the published rule set (§5): a noisy sender one person reports
         // silences it for everyone on the next sync, not just the sender's ALWAYS_IGNORE list above.
         if (remoteRulesRepository?.isDiscardedSender(sender) == true) return ParseOutcome.IgnoredAsNoise
+        // Published ignore rules (IGNORE_RULES.md §3) must come *before* the parsing tiers below:
+        // "TXN DECLINED: Rs.500 ... HDFC Bank Debit Card" reads like a real spend to a template, so
+        // running this later would book a payment that never happened.
+        if (remoteRulesRepository?.isIgnoredMessage(sender, body) == true) return ParseOutcome.IgnoredAsNoise
 
         BankTemplates.findMatch(sender, body)?.let { return ParseOutcome.Parsed(it) }
 
