@@ -60,9 +60,20 @@ object RealMessages {
     val federalUpi = "Debited Rs 1.00 from a/c X6686 on 01Aug26 19:00 via UPI to KEERTHANA KU. " +
         "Ref 621312687340.Bal Rs 42727.9. -Federal Bank"
 
+    /**
+     * Canara Bank: writes the direction as the abbreviation `Dr.`, which no parse verb and no
+     * [looksFinancial] keyword matched — so tier 2 discarded it without storing a row, and it never
+     * reached the review queue. The reason the financial heuristic now reads a message's structure
+     * (a masked account, a balance, a reference) instead of a closed list of verbs.
+     */
+    val canaraDebit = "Dear Customer, Acct XXX167 Dr. INR 26.00 on 29/09/26 to Euronet Serv; " +
+        "UPI: 627263395849; Bal INR 49,511.88.Not you?SMS BLOCKUPI to 9901771222-CanaraBank"
+
     /** HDFC: a declined transaction, carrying a per-customer short link. */
     val hdfcDeclined = "TXN DECLINED: Rs.500 on 29-09-26 at 19:00 on HDFC Bank Debit Card xx1234. " +
         "Reason: Online set Limit Exceeded. Modify:https://1.hdfc.bank.in/HDFCBK/s/a/E0WMgeP0"
 
-    val all = listOf(axisApy, hdfcUpi, npsDebit, npsCredit, tmbCredit, tmbDebit, federalUpi, hdfcDeclined)
+    val all = listOf(
+        axisApy, hdfcUpi, npsDebit, npsCredit, tmbCredit, tmbDebit, federalUpi, canaraDebit, hdfcDeclined,
+    )
 }

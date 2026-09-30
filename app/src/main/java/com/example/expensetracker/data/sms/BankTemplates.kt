@@ -300,17 +300,60 @@ object BankTemplates {
 
 private val AMOUNT_HINT = Regex("""(?i)(?:rs\.?|inr)\s*[\d,]+""")
 /**
- * Must stay a superset of the parse verbs. A wording that parses but isn't listed here would be
- * fine, but one that is *missing* from both — as "sent" was — means the message is silently
- * discarded and the money never appears anywhere, not even the review queue.
+ * Must stay a superset of the parse verbs — held by a test rather than by hand, since a wording
+ * missing from both lists means the message is silently discarded and the money never appears
+ * anywhere, not even the review queue. That's how "sent" went missing, and how Canara's `Dr.`
+ * did: no list of verbs can keep up with how each bank abbreviates its own alerts, which is why
+ * this is now only one of the ways a message can qualify.
  */
 private val TRANSACTIONAL_KEYWORD_HINT = Regex(
     """(?i)\b(debited|credited|debit|credit|spent|paid|received|withdrawn|purchase|sent|transferred|transfer)\b""",
 )
 
-/** Heuristic for tier 2: looks financial enough to surface for manual review. */
-fun looksFinancial(body: String): Boolean =
-    AMOUNT_HINT.containsMatchIn(body) && TRANSACTIONAL_KEYWORD_HINT.containsMatchIn(body)
+/**
+ * The verbs [directionRegexes] parses, unpacked from their alternation for the test that holds
+ * [TRANSACTIONAL_KEYWORD_HINT] as their superset.
+ */
+internal fun parseVerbs(): List<String> =
+    listOf(DEBIT_VERB, CREDIT_VERB).flatMap { it.removePrefix("(?:").removeSuffix(")").split("|") }
+
+/**
+ * A balance and the amount that moved, together — "Dr. INR 26.00 … Bal INR 49,511.88". Matched so
+ * the balance can be taken out of the message before asking whether any amount is left: a balance
+ * enquiry's *only* amount is its balance, and that's what separates it from a real alert.
+ */
+private val BALANCE_STATEMENT = Regex(
+    """(?i)\b(?:avl|available|closing|updated)?\s*(?:bal|balance)\b[^\d]{0,12}?(?:rs\.?|inr)?\s*[\d,]+(?:\.\d{1,2})?""",
+)
+
+/**
+ * Structure only a bank alert has: the account the money left, the reference it moved under, the
+ * balance it left behind, the handle it was paid to. Unlike a verb, none of this depends on the
+ * bank's choice of wording — which is the point, since the wording is what keeps changing.
+ */
+private fun hasBankAlertMarker(body: String): Boolean =
+    MASKED_ACCOUNT.containsMatchIn(body) ||
+        ACCOUNT_LABEL.containsMatchIn(body) ||
+        BALANCE_STATEMENT.containsMatchIn(body) ||
+        UPI_HANDLE.containsMatchIn(body) ||
+        SmsReferenceParser.referencesIn(body).isNotEmpty()
+
+/** `swiggy@icici` — a payee handle is as much a transaction marker as an account number. */
+private val UPI_HANDLE = Regex("""[\w.\-]+@[\w.\-]+""")
+
+/**
+ * Heuristic for tier 2: looks financial enough to surface for manual review.
+ *
+ * Two ways to qualify, and an amount is needed either way. A transactional verb is one (kept
+ * as-is, so nothing that reaches review today stops doing so). Failing that, the *shape* of a bank
+ * alert plus an amount that isn't the balance — which admits an alert whose direction is spelled
+ * in a way no list here anticipated, while still leaving a bare balance enquiry out.
+ */
+fun looksFinancial(body: String): Boolean {
+    if (!AMOUNT_HINT.containsMatchIn(body)) return false
+    if (TRANSACTIONAL_KEYWORD_HINT.containsMatchIn(body)) return true
+    return hasBankAlertMarker(body) && AMOUNT_HINT.containsMatchIn(BALANCE_STATEMENT.replace(body, " "))
+}
 
 private val LOOSE_AMOUNT = Regex("""(?i)(?:rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)""")
 

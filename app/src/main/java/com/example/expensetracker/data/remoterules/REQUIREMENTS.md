@@ -71,7 +71,13 @@ New tier order inside `SmsParser.parse`:
    ordered by `priority` descending, same discipline as `BankTemplates.findMatch`
    (try every matching rule before giving up, don't abort on the first sender match).
 5. `LearnedPatternDao` per-device patterns (unchanged)
-6. Review queue (unchanged)
+6. Review queue — admitted by `BankTemplates.looksFinancial`, which reads a message's *structure*
+   (a masked account, a reference, a balance, a UPI handle) as well as its verbs. A closed list of
+   verbs couldn't keep up with how each bank abbreviates its own alerts: Canara writes `Dr.`/`Cr.`,
+   an ATM writes `W/D`, and a message no verb matched was discarded without a row — so exactly the
+   messages most in need of a rule could never ask for one. An amount is still required, and it
+   must be an amount that isn't the balance, which keeps a bare balance enquiry out. Over-admission
+   is corrected from the console with an ignore rule (`IGNORE_RULES.md`), not an app release.
 
 Remote rules also carry `discardSenders` — merged into `SmsParser.ALWAYS_IGNORE_SENDERS`
 at parse time, so a noisy sender you identify from one person's submissions (e.g. a new

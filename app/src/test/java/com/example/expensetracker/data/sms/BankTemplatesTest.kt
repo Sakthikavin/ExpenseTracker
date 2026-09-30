@@ -123,6 +123,30 @@ class BankTemplatesTest {
         assertFalse(looksFinancial(body))
     }
 
+    // --- the financial heuristic reads structure, not a list of verbs ---
+
+    /**
+     * Canara writes the direction as `Dr.`, so no keyword in the old closed list matched and the
+     * message was discarded without a row — the review queue never saw it. Its structure says bank
+     * alert three times over: a masked account, a reference, and a balance.
+     */
+    @Test
+    fun `an alert that abbreviates the direction still reaches the review queue`() {
+        assertNull(parse(RealMessages.canaraDebit))
+        assertTrue(looksFinancial(RealMessages.canaraDebit))
+    }
+
+    /**
+     * The hint list exists to catch what the parse verbs miss, so a verb it doesn't cover is a
+     * message discarded with no trace. This is the invariant the old KDoc asked a human to hold.
+     */
+    @Test
+    fun `every parse verb is also a financial hint`() {
+        for (verb in parseVerbs()) {
+            assertTrue("parse verb not in the financial hint list: $verb", looksFinancial("Rs 100 $verb"))
+        }
+    }
+
     @Test
     fun `ignores a balance enquiry`() {
         val body = "Dear customer, your a/c balance is Rs 15,000.00 as on 02-08-26"
