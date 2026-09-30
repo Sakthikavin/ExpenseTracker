@@ -13,7 +13,7 @@ class RedactorTest {
         val template = Redactor.redact(body)
 
         assertEquals(
-            "Rs.<AMT> debited from A/c XX<D4> to VPA <VPA> Ref <REF> on <DATE>.\nAvl Bal <BAL>",
+            "Rs.<AMT> debited from A/c XX<D4> to VPA <VPA> Ref <REF> on <DATE>.\nAvl Bal Rs.<BAL>",
             template,
         )
         assertEquals(emptyList<String>(), Redactor.unredactedHints(template))

@@ -6,6 +6,11 @@ package com.example.expensetracker.data.remoterules
  *
  * Placeholders match the console's vocabulary (`<[A-Z]+\d*>`); anything outside that set is
  * invisible to its template grouping and starter-regex builder.
+ *
+ * **The invariant:** a template differs from its message *only* where a value became a
+ * placeholder. Currency words, separators, spacing and digit counts are shape, not personal data,
+ * and every rule written on the console depends on them — so dropping any of it shows rule authors
+ * a message that doesn't exist. `RedactorInvariantTest` holds this over the real-message corpus.
  */
 object Redactor {
 
@@ -24,22 +29,28 @@ object Redactor {
         // First, so digits inside a link can't be half-masked into <DATE> or <REF> fragments.
         URL to { "<URL>" },
 
-        // Balance: the whole phrase goes, not just the number — "Avl Bal Rs.15,342.50" is as
-        // identifying as the account number it follows.
-        Regex("""(?i)\b((?:avl|available|closing|updated)?\s*(?:bal|balance)\b[^\d]{0,12}?)(?:rs\.?|inr)?\s*[\d,]+(?:\.\d{1,2})?""") to
-            { m -> m.groupValues[1].trimEnd() + " <BAL>" },
+        // Balance: only the number goes. The currency token and its spacing are message shape that
+        // rules anchor on — dropping them (as this used to) showed rule authors a `bal is <BAL>`
+        // that no real message has, and every rule written against it matched nothing.
+        Regex("""(?i)\b((?:avl|available|closing|updated)?\s*(?:bal|balance)\b[^\d]{0,12}?)(rs\.?|inr)?(\s*)[\d,]+(?:\.\d{1,2})?""") to
+            { m -> m.groupValues[1] + m.groupValues[2] + m.groupValues[3] + "<BAL>" },
 
-        // Account / card numbers: keep the masking the bank already applied, drop the visible digits.
-        Regex("""(?i)\b(a/c|ac|acct|account|card)(\s*(?:no\.?|number)?\s*)([xX*]+)\s*\d{2,6}""") to
-            { m -> "${m.groupValues[1]}${m.groupValues[2]}${m.groupValues[3]}<D4>" },
-        Regex("""\b[xX*]{2,}\s*\d{2,6}\b""") to { m -> m.value.takeWhile { it == 'x' || it == 'X' || it == '*' } + "<D4>" },
+        // Account / card numbers: keep the masking the bank already applied, drop the visible
+        // digits — but say how many there were, since a rule has to match that many.
+        Regex("""(?i)\b(a/c|ac|acct|account|card)(\s*(?:no\.?|number)?\s*)([xX*]+)(\s*)(\d{2,6})""") to
+            { m -> m.groupValues.slice(1..4).joinToString("") + maskedDigits(m.groupValues[5]) },
+        Regex("""\b([xX*]{2,})(\s*)(\d{2,6})\b""") to
+            { m -> m.groupValues[1] + m.groupValues[2] + maskedDigits(m.groupValues[3]) },
 
         // Amounts: the currency token and its spacing stay so a rule can anchor on them.
         Regex("""(?i)\b(rs\.?|inr)(\s*)[\d,]+(?:\.\d{1,2})?""") to { m -> m.groupValues[1] + m.groupValues[2] + "<AMT>" },
 
         Regex("""\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b""") to { "<DATE>" },
         Regex("""\b\d{4}-\d{1,2}-\d{1,2}\b""") to { "<DATE>" },
-        Regex("""\b\d{1,2}[\s\-]?[A-Za-z]{3}[a-z]*[\s\-]?\d{2,4}\b""") to { "<DATE>" },
+        // A spaced date ("30 Sep 2026") gets its own placeholder: a rule's date group is usually
+        // `\S+`, which can't read one, so the console has to be able to tell the two apart.
+        Regex("""\b\d{1,2}[\s\-]?[A-Za-z]{3}[a-z]*[\s\-]?\d{2,4}\b""") to
+            { m -> if (m.value.any(Char::isWhitespace)) "<DATEW>" else "<DATE>" },
         Regex("""\b\d{1,2}:\d{2}(?::\d{2})?\b""") to { "<TIME>" },
 
         // Reference / UTR: keep the label, mask the identifier.
@@ -52,6 +63,9 @@ object Redactor {
         // UPI / email handles: the owner goes, the fact that it *is* a handle stays.
         Regex("""[\w.\-]+@[\w.\-]+""") to { "<VPA>" },
     )
+
+    /** `<D4>` for `1234` — the count is shape a rule needs, the digits themselves are not. */
+    private fun maskedDigits(digits: String) = "<D${digits.length}>"
 
     fun redact(body: String): String = RULES.fold(body.trim()) { text, (regex, replacement) ->
         regex.replace(text, replacement)

@@ -115,12 +115,18 @@ never raw text, before anything is queued for upload. Same idea as `PatternLearn
 
 ### 6.1 What gets masked
 
+**The invariant:** a template differs from its message *only* where a value became a placeholder.
+Currency words, separators, spacing and digit counts are message *shape*, not personal data, and
+every rule depends on them — a template that drops any of it shows rule authors a message that
+doesn't exist. `RedactorInvariantTest` enforces this by fitting each template back over the real
+message it came from.
+
 | Element | Rule | Example in → out |
 |---|---|---|
 | Amounts | replaced with `<AMT>` | `Rs.500.00` → `Rs.<AMT>` |
-| Account/card numbers | keep only the last visible segment shape, zero the digits | `A/c XX1234` → `A/c XX<D4>`, `Card *5566` → `Card *<D4>` |
-| Balances | full line/phrase dropped, not just the number | `Avl Bal Rs.15,342.50` → `Avl Bal <BAL>` |
-| Dates / times | replaced with `<DATE>` / `<TIME>` | `29-09-26` → `<DATE>` |
+| Account/card numbers | keep the bank's own masking and the gap after it, replace the digits with `<D`*n*`>` for the *n* digits masked | `A/c XX1234` → `A/c XX<D4>`, `Card *5566` → `Card *<D4>`, `XX 12345` → `XX <D5>` |
+| Balances | only the number goes; the phrase, the currency token and its spacing stay | `Avl Bal Rs.15,342.50` → `Avl Bal Rs.<BAL>`, `Avl Bal:INR 1,234` → `Avl Bal:INR <BAL>` |
+| Dates / times | replaced with `<DATE>` / `<TIME>`, or `<DATEW>` when the date contains whitespace (a rule's `\S+` date group can't read one) | `29-09-26` → `<DATE>`, `30 Sep 2026` → `<DATEW>` |
 | Reference / UTR numbers | replaced with `<REF>` | `Ref 123456789012` → `Ref <REF>` |
 | Phone numbers | replaced with `<PHONE>` | `917036165000` → `<PHONE>` |
 | VPA / UPI handles | keep the structure, mask the handle owner | `merchant@ybl` → `<VPA>` (merchant *name* text elsewhere is kept — see below) |
@@ -147,11 +153,12 @@ Avl Bal Rs.15,342.50
 Redacted template uploaded:
 ```
 Rs.<AMT> debited from A/c XX<D4> to VPA <VPA> Ref <REF> on <DATE>.
-Avl Bal <BAL>
+Avl Bal Rs.<BAL>
 ```
 
 Nothing in the uploaded payload identifies the amount, the account, or the balance —
-only the *shape* of the message, which is all a regex needs.
+only the *shape* of the message, which is all a regex needs. `Rs.` stays because it is shape: the
+number is what identifies someone, the word for the currency isn't.
 
 ### 6.3 Submission payload
 
