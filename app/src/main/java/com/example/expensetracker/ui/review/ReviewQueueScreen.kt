@@ -4,6 +4,7 @@ package com.example.expensetracker.ui.review
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material3.AlertDialog
@@ -72,6 +74,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -254,6 +258,7 @@ private fun ReviewCard(
 ) {
     val dismissState = rememberSwipeToDismissBoxState()
     val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
 
     SwipeToDismissBox(
         state = dismissState,
@@ -306,31 +311,62 @@ private fun ReviewCard(
                         Icon(Icons.Filled.Check, contentDescription = "Confirm", modifier = Modifier.size(18.dp))
                     }
                 }
-                Text(
-                    rawSms.body,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 12.dp),
-                )
-                if (rawSms.submittedAt == null) {
-                    TextButton(onClick = onSubmit, modifier = Modifier.padding(top = 4.dp)) {
-                        Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Send for a rule")
+                MessageBody(body = rawSms.body)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (rawSms.submittedAt == null) {
+                        TextButton(onClick = onSubmit) {
+                            Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Send for a rule")
+                        }
+                    } else {
+                        // Still unparsed here until a rule comes back, so the row stays — but asking
+                        // again would only add a duplicate to the console's inbox.
+                        Text(
+                            "Sent for a rule on ${formatDate(rawSms.submittedAt)}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
-                } else {
-                    // Still unparsed here until a rule comes back, so the row stays — but asking
-                    // again would only add a duplicate to the console's inbox.
-                    Text(
-                        "Sent for a rule on ${formatDate(rawSms.submittedAt)}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 12.dp),
-                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    TextButton(onClick = { clipboard.setText(AnnotatedString(rawSms.body)) }) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Copy")
+                    }
                 }
             }
+        }
+    }
+}
+
+/**
+ * The SMS text on a [ReviewCard]. Clipped to a few lines so a long bank message doesn't push the
+ * rest of the queue off screen, but tappable to read in full and copy out — the same affordance the
+ * transactions list gives for an original message, which matters more here since these are exactly
+ * the messages the parser couldn't read.
+ */
+@Composable
+private fun MessageBody(body: String) {
+    var expanded by remember { mutableStateOf(false) }
+    // Short messages are never clipped, so they get no expand toggle — only a copy button.
+    var clipped by remember { mutableStateOf(false) }
+
+    Text(
+        body,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = if (expanded) Int.MAX_VALUE else 3,
+        overflow = TextOverflow.Ellipsis,
+        onTextLayout = { if (!expanded) clipped = it.hasVisualOverflow },
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = clipped || expanded) { expanded = !expanded }
+            .padding(top = 12.dp),
+    )
+    if (clipped || expanded) {
+        TextButton(onClick = { expanded = !expanded }) {
+            Text(if (expanded) "Show less" else "Show full message")
         }
     }
 }
