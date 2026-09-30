@@ -218,4 +218,62 @@ class MigrationTest {
             assertEquals(0, cursor.count) // column exists and is queryable
         }
     }
+
+    /**
+     * The categories added after the first release have to arrive by migration: the seed callback
+     * only runs when the database is created, so an existing install would never see them.
+     */
+    @Test
+    fun migrate6To7_addsTheNewCategoriesAndKeepsExistingOnes() {
+        helper.createDatabase(dbName, 6).use { db ->
+            db.execSQL(
+                "INSERT INTO categories (householdId, name, icon, colour, isIncome) " +
+                    "VALUES (1, 'Groceries', 'grocery', 16737996, 0)",
+            )
+        }
+
+        val db = helper.runMigrationsAndValidate(dbName, 7, true, AppDatabase.MIGRATION_6_7)
+
+        db.query("SELECT COUNT(*) FROM categories").use { cursor ->
+            cursor.moveToFirst()
+            assertEquals(
+                "the user's own category survives, alongside every new one",
+                1 + AppDatabase.CATEGORIES_ADDED_IN_V7.size,
+                cursor.getInt(0),
+            )
+        }
+        db.query("SELECT icon, isIncome FROM categories WHERE name = 'Refunds & Cashback'").use { cursor ->
+            assertEquals(1, cursor.count)
+            cursor.moveToFirst()
+            assertEquals("replay", cursor.getString(0))
+            assertEquals("a refund is income, not spending", 1, cursor.getInt(1))
+        }
+    }
+
+    /**
+     * Someone who added "Travel & Holidays" by hand before upgrading must not end up with two of
+     * them — two categories sharing a name behave as separate categories in budgets, merchant
+     * rules and every dashboard slice.
+     */
+    @Test
+    fun migrate6To7_doesNotDuplicateACategoryTheUserAlreadyAdded() {
+        helper.createDatabase(dbName, 6).use { db ->
+            db.execSQL(
+                "INSERT INTO categories (householdId, name, icon, colour, isIncome) " +
+                    "VALUES (1, 'Travel & Holidays', 'home', 123456, 0)",
+            )
+        }
+
+        val db = helper.runMigrationsAndValidate(dbName, 7, true, AppDatabase.MIGRATION_6_7)
+
+        db.query("SELECT icon FROM categories WHERE name = 'Travel & Holidays'").use { cursor ->
+            assertEquals("the user's own row is kept, not duplicated", 1, cursor.count)
+            cursor.moveToFirst()
+            assertEquals("and it is left exactly as they made it", "home", cursor.getString(0))
+        }
+        db.query("SELECT COUNT(*) FROM categories").use { cursor ->
+            cursor.moveToFirst()
+            assertEquals(AppDatabase.CATEGORIES_ADDED_IN_V7.size, cursor.getInt(0))
+        }
+    }
 }

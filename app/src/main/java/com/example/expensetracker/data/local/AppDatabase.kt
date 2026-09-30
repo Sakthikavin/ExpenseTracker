@@ -40,7 +40,7 @@ import kotlinx.coroutines.launch
         OwnAccountEntity::class,
         MerchantCategoryRuleEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -65,7 +65,10 @@ abstract class AppDatabase : RoomDatabase() {
         private fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "expense_tracker.db")
                 .addCallback(SeedCallback(context.applicationContext))
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(
+                    MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
+                    MIGRATION_6_7,
+                )
                 .build()
 
         /**
@@ -182,6 +185,67 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v6 → v7: gives existing installs the categories added after the first release. The seed
+         * callback can't: Room runs it only when the database file is created, so a phone that
+         * already has a database would never see a new entry in [DEFAULT_CATEGORIES].
+         *
+         * Each insert is conditional on the name not already being present. `categories.name` has
+         * no unique index and `CategoryDao.insert` aborts on conflict, so anyone who added
+         * "Travel & Holidays" by hand before upgrading would otherwise end up with two — and two
+         * categories with one name behave as separate categories everywhere: budgets, merchant
+         * rules, every dashboard slice. This way the upgrade is safe whatever the user already did,
+         * and safe to re-run.
+         */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                CATEGORIES_ADDED_IN_V7.forEach { category ->
+                    db.execSQL(
+                        "INSERT INTO categories (householdId, name, icon, colour, isIncome) " +
+                            "SELECT ?, ?, ?, ?, ? " +
+                            "WHERE NOT EXISTS (SELECT 1 FROM categories WHERE name = ?)",
+                        arrayOf(
+                            category.householdId,
+                            category.name,
+                            category.icon,
+                            category.colour,
+                            if (category.isIncome) 1 else 0,
+                            category.name,
+                        ),
+                    )
+                }
+            }
+        }
+
+        /**
+         * Added after the first release, so they reach existing installs through [MIGRATION_6_7]
+         * rather than the seed — [SeedCallback] only runs when the database file is created.
+         *
+         * Why each one exists: an EMI is not a utility bill, insurance is neither a bill nor an
+         * asset, a flight is not the daily commute, and a subscription is the thing people most
+         * want to audit separately from entertainment. `Cash withdrawal` takes the neutral grey
+         * Transfers uses, for the same reason: money at an ATM hasn't been spent yet, it's spending
+         * not yet recorded, and colouring it like spending double-counts it by eye.
+         *
+         * The income side is the bigger gap being closed here — one income category (Salary) meant
+         * every other credit had nowhere to go, so bank interest and a refund both had to land in
+         * "Salary" and corrupt any read of what's actually earned. The three income categories
+         * share Salary's green deliberately: the hue means income, and the icon tells them apart.
+         */
+        val CATEGORIES_ADDED_IN_V7: List<CategoryEntity> = listOf(
+            CategoryEntity(name = "Loans & EMI", icon = "credit_card", colour = 0xFF2A78D6L),
+            CategoryEntity(name = "Insurance", icon = "security", colour = 0xFFEB6834L),
+            CategoryEntity(name = "Education & Fees", icon = "school", colour = 0xFFEDA100L),
+            CategoryEntity(name = "Travel & Holidays", icon = "flight", colour = 0xFFE87BA4L),
+            CategoryEntity(name = "Subscriptions", icon = "autorenew", colour = 0xFF008300L),
+            CategoryEntity(name = "Family & Gifts", icon = "card_giftcard", colour = 0xFF4A3AA7L),
+            CategoryEntity(name = "Taxes & Government", icon = "account_balance", colour = 0xFFE34948L),
+            CategoryEntity(name = "Cash withdrawal", icon = "local_atm", colour = 0xFF78909CL),
+            CategoryEntity(name = "Interest & Dividends", icon = "savings", colour = 0xFF1BAF7AL, isIncome = true),
+            CategoryEntity(name = "Refunds & Cashback", icon = "replay", colour = 0xFF1BAF7AL, isIncome = true),
+            CategoryEntity(name = "Other income", icon = "payments", colour = 0xFF1BAF7AL, isIncome = true),
+        )
+
         // Colours are the validated 8-slot categorical palette, assigned
         // by category identity (slot order: Bills & Utilities, Investments, Unassigned, Groceries,
         // Entertainment, Health, Food & Dining, Transport). Categories beyond that table cycle back
@@ -200,7 +264,8 @@ abstract class AppDatabase : RoomDatabase() {
             // self-transfer. Deliberately neutral in colour so it reads as "not really spend".
             CategoryEntity(name = "Transfers", icon = "swap_horiz", colour = 0xFF78909CL),
             CategoryEntity(name = "Salary", icon = "attach_money", colour = 0xFF1BAF7AL, isIncome = true), // cycled
-        )
+        ) + CATEGORIES_ADDED_IN_V7
+
     }
 
     private class SeedCallback(private val context: Context) : Callback() {
