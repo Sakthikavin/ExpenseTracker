@@ -342,6 +342,15 @@ private fun hasBankAlertMarker(body: String): Boolean =
 private val UPI_HANDLE = Regex("""[\w.\-]+@[\w.\-]+""")
 
 /**
+ * Mentions money at all. The line between a message worth keeping a record of having turned away
+ * ([com.example.expensetracker.data.sms.ParseOutcome.Discarded]) and one not worth a row
+ * ([com.example.expensetracker.data.sms.ParseOutcome.Ignored]) — an OTP, a delivery notification
+ * and a personal text all fall on the far side of it, which is what keeps the skipped-messages
+ * bucket from becoming a copy of the inbox.
+ */
+fun mentionsAmount(body: String): Boolean = AMOUNT_HINT.containsMatchIn(body)
+
+/**
  * Heuristic for tier 2: looks financial enough to surface for manual review.
  *
  * Two ways to qualify, and an amount is needed either way. A transactional verb is one (kept

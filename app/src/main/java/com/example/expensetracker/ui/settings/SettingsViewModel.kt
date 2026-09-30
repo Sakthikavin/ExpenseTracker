@@ -14,8 +14,10 @@ import com.example.expensetracker.data.repository.SmsRepository
 import com.example.expensetracker.data.sms.SmsParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Clock
@@ -30,6 +32,8 @@ data class ImportProgress(
     val imported: Int = 0,
     val needsReview: Int = 0,
     val ignored: Int = 0,
+    /** Mentioned money but matched nothing — the rows "Messages I skipped" lists. */
+    val skipped: Int = 0,
 )
 
 /** Live state of the "Rule updates" section (§8.2). */
@@ -56,6 +60,10 @@ class SettingsViewModel(
 
     private val _ruleUpdateState = MutableStateFlow(RuleUpdateState(version = null, lastCheckedAtMillis = null))
     val ruleUpdateState: StateFlow<RuleUpdateState> = _ruleUpdateState.asStateFlow()
+
+    /** Drives the "Messages I skipped" row — zero hides it, since an empty diagnostic list is noise. */
+    val skippedCount: StateFlow<Int> = smsRepository.observeDiscardedCount()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     /**
      * Re-reads the repository's in-memory cache. Needed because the app-launch `syncIfDue()` and
@@ -100,11 +108,13 @@ class SettingsViewModel(
             var imported = 0
             var needsReview = 0
             var ignored = 0
+            var skipped = 0
             messages.forEachIndexed { index, message ->
                 when (smsRepository.ingest(message.sender, message.body, message.receivedAt)) {
                     IngestResult.IMPORTED -> imported++
                     IngestResult.NEEDS_REVIEW -> needsReview++
                     IngestResult.IGNORED -> ignored++
+                    IngestResult.DISCARDED -> skipped++
                 }
                 _importProgress.value = ImportProgress(
                     isRunning = true,
@@ -113,6 +123,7 @@ class SettingsViewModel(
                     imported = imported,
                     needsReview = needsReview,
                     ignored = ignored,
+                    skipped = skipped,
                 )
             }
 
@@ -156,7 +167,9 @@ class SettingsViewModel(
     /** The half of §8.2's message that reports what the new rules did to the existing queue. */
     private fun reparseSummary(reparse: ReparseOutcome?): String = when {
         reparse == null || reparse.checked == 0 -> ""
-        else -> " Re-checked ${reparse.checked} pending ${"message".plural(reparse.checked)}, cleared ${reparse.cleared}."
+        // "Unmatched" rather than "pending": the walk now covers skipped messages too, not just
+        // the ones waiting in the review queue.
+        else -> " Re-checked ${reparse.checked} unmatched ${"message".plural(reparse.checked)}, cleared ${reparse.cleared}."
     }
 
     private fun String.plural(count: Int) = if (count == 1) this else this + "s"

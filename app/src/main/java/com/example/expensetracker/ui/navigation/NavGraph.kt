@@ -35,6 +35,7 @@ import com.example.expensetracker.ui.common.appViewModel
 import com.example.expensetracker.ui.dashboard.DashboardScreen
 import com.example.expensetracker.ui.rules.MerchantRulesScreen
 import com.example.expensetracker.ui.review.ReviewQueueScreen
+import com.example.expensetracker.ui.review.SkippedMessagesScreen
 import com.example.expensetracker.ui.settings.SettingsScreen
 import com.example.expensetracker.ui.transactions.TransactionFilter
 import com.example.expensetracker.ui.transactions.TransactionsScreen
@@ -164,8 +165,14 @@ fun ExpenseTrackerNavGraph() {
             composable(Destination.MerchantRules.route) { MerchantRulesScreen() }
             composable(Destination.Accounts.route) { AccountsScreen() }
             composable(Destination.Settings.route) {
-                SettingsScreen(onNavigateToReview = { navigateFromDashboard(Destination.Review.route) })
+                SettingsScreen(
+                    onNavigateToReview = { navigateFromDashboard(Destination.Review.route) },
+                    onNavigateToSkipped = {
+                        navController.navigate(Destination.SkippedMessages.route) { launchSingleTop = true }
+                    },
+                )
             }
+            composable(Destination.SkippedMessages.route) { SkippedMessagesScreen() }
         }
     }
 }

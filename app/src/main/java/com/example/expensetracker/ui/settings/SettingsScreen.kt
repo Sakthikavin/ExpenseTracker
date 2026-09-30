@@ -59,7 +59,7 @@ import kotlinx.coroutines.launch
 import kotlinx.datetime.Instant
 
 @Composable
-fun SettingsScreen(onNavigateToReview: () -> Unit) {
+fun SettingsScreen(onNavigateToReview: () -> Unit, onNavigateToSkipped: () -> Unit = {}) {
     val container = LocalAppContainer.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -72,6 +72,7 @@ fun SettingsScreen(onNavigateToReview: () -> Unit) {
     val lastImportAt by settingsViewModel.lastImportAt.collectAsState()
     val ignoreBelowMinor by settingsViewModel.ignoreBelowMinor.collectAsState()
     val ruleUpdateState by settingsViewModel.ruleUpdateState.collectAsState()
+    val skippedCount by settingsViewModel.skippedCount.collectAsState()
 
     val prefs = remember { context.getSharedPreferences("settings", Context.MODE_PRIVATE) }
     LaunchedEffect(Unit) {
@@ -224,6 +225,18 @@ fun SettingsScreen(onNavigateToReview: () -> Unit) {
             },
         ) { Text("Clean up confirmation-only messages") }
 
+        // Only when there's something to see: an empty diagnostic list is a dead end, and the
+        // count is the part that tells you whether the parser has been missing anything.
+        if (skippedCount > 0) {
+            Text(
+                "$skippedCount ${if (skippedCount == 1) "message" else "messages"} mentioned an " +
+                    "amount but didn't look like a bank alert, so nothing was recorded for them.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = onNavigateToSkipped) { Text("Messages I skipped →") }
+        }
+
         HorizontalDivider()
 
         Text(
@@ -326,6 +339,9 @@ private fun ImportSheet(
                 SummaryRow("Transactions added", progress.imported.toString())
                 SummaryRow("Needs your review", progress.needsReview.toString(), StatusWarning)
                 SummaryRow("Not financial (ignored)", progress.ignored.toString())
+                if (progress.skipped > 0) {
+                    SummaryRow("Mentioned money, not recognised", progress.skipped.toString())
+                }
                 if (progress.needsReview > 0) {
                     TextButton(onClick = onReview) {
                         Text("Review the ${progress.needsReview} flagged messages →")

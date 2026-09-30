@@ -5,6 +5,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.RateReview
 import androidx.compose.material.icons.filled.Receipt
@@ -50,6 +51,9 @@ sealed class Destination(val route: String, val label: String, val icon: ImageVe
     }
 
     data object Review : Destination("review", "Review", Icons.Filled.RateReview)
+
+    /** Reached from Settings, not the bottom bar — a diagnostic list, not a daily destination. */
+    data object SkippedMessages : Destination("skipped_messages", "Messages I skipped", Icons.Filled.Inbox)
     data object Budgets : Destination("budgets", "Budgets", Icons.Filled.PieChart)
     data object Bills : Destination("bills", "Bills", Icons.Filled.Receipt)
     data object Categories : Destination("categories", "Categories", Icons.Filled.Category)

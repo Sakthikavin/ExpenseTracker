@@ -35,7 +35,15 @@ sealed interface ParseOutcome {
      */
     data object IgnoredAsNoise : ParseOutcome
 
-    /** Doesn't look financial at all; never touches raw_sms. */
+    /**
+     * Mentions money, but carries none of the structure [looksFinancial] recognises as a bank
+     * alert. Persisted with [com.example.expensetracker.data.local.entity.ParseStatus.DISCARDED]
+     * and pruned to the newest few hundred: this is the bucket that makes the heuristic's mistakes
+     * findable, since a message it turns away used to leave no trace of any kind.
+     */
+    data object Discarded : ParseOutcome
+
+    /** Doesn't look financial at all, and doesn't even mention money; never touches raw_sms. */
     data object Ignored : ParseOutcome
 }
 

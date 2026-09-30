@@ -38,7 +38,12 @@ class SmsParser(
             ?.let { return ParseOutcome.Parsed(it) }
 
         if (looksLikePreNotice(body)) return ParseOutcome.IgnoredAsNoise
-        if (!looksFinancial(body)) return ParseOutcome.Ignored
+        // Turned away by the heuristic — but if it mentioned money, keep the row so the mistake is
+        // findable. A wording no tier recognised used to leave nothing behind at all, which is how
+        // Canara's `Dr.` alerts went missing for months.
+        if (!looksFinancial(body)) {
+            return if (mentionsAmount(body)) ParseOutcome.Discarded else ParseOutcome.Ignored
+        }
 
         // A template/learned pattern can confidently read an unusual-but-real small amount (a ₹1
         // UPI payment is still a real payment); this only guards the loose, unconfirmed heuristic

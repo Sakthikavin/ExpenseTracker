@@ -347,7 +347,7 @@ private fun ReviewCard(
  * the messages the parser couldn't read.
  */
 @Composable
-private fun MessageBody(body: String) {
+internal fun MessageBody(body: String) {
     var expanded by remember { mutableStateOf(false) }
     // Short messages are never clipped, so they get no expand toggle — only a copy button.
     var clipped by remember { mutableStateOf(false) }

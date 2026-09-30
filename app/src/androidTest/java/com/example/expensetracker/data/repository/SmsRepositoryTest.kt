@@ -611,4 +611,90 @@ class SmsRepositoryTest {
         // Safe to run twice: nothing left from those senders to move a second time.
         assertEquals(0, repository.ignoreConfirmationOnlyBacklog())
     }
+
+    // --- skipped messages: what the heuristic turned away (Canara `Dr.`) ---
+
+    /**
+     * A message that mentions money but matches nothing keeps a row now. It used to keep none,
+     * which is how a Canara alert reading `Dr.` instead of "debited" went missing entirely: absent
+     * from transactions, from review, and from any list the user could look at.
+     */
+    @Test
+    fun aMessageMentioningMoneyThatMatchesNothingIsKeptAsSkipped() = runBlocking {
+        val body = "Reminder: your order of Rs 1,299 is out for delivery. Track it in the app."
+
+        val result = repository.ingest("AD-SOMEBK", body, Instant.fromEpochMilliseconds(1_785_657_168_000))
+
+        assertEquals(IngestResult.DISCARDED, result)
+        val skipped = db.rawSmsDao().observeByStatus(ParseStatus.DISCARDED).first()
+        assertEquals(1, skipped.size)
+        assertEquals(body, skipped.single().body)
+        assertTrue("a skipped message must not become a transaction", db.transactionDao().observeAll().first().isEmpty())
+    }
+
+    /** The cap on the bucket: the rest of the inbox must not turn into rows. */
+    @Test
+    fun aMessageWithNoAmountAtAllIsNotStored() = runBlocking {
+        val result = repository.ingest("VM-AMAZON", "Your order has been delivered.", Instant.fromEpochMilliseconds(1))
+
+        assertEquals(IngestResult.IGNORED, result)
+        assertEquals(0, db.rawSmsDao().observeByStatus(ParseStatus.DISCARDED).first().size)
+    }
+
+    /** Diagnostics, not history: the bucket is capped, oldest out first. */
+    @Test
+    fun theSkippedBucketKeepsOnlyItsNewestRows() = runBlocking {
+        val capped = SmsRepository(
+            rawSmsDao = db.rawSmsDao(),
+            learnedPatternDao = db.learnedPatternDao(),
+            transactionRepository = TransactionRepository(db.transactionDao()),
+            parser = SmsParser(db.learnedPatternDao()),
+            discardedKeep = 3,
+        )
+        repeat(5) { index ->
+            capped.ingest(
+                "AD-SOMEBK",
+                "Reminder: your order of Rs 1,29$index is out for delivery.",
+                Instant.fromEpochMilliseconds(1_785_657_168_000 + index * 1_000L),
+            )
+        }
+
+        val skipped = db.rawSmsDao().observeByStatus(ParseStatus.DISCARDED).first()
+        assertEquals(3, skipped.size)
+        // observeByStatus is newest-first, so the survivors are the last three ingested.
+        assertTrue(skipped.first().body.endsWith("Rs 1,294 is out for delivery."))
+        assertTrue(skipped.last().body.endsWith("Rs 1,292 is out for delivery."))
+    }
+
+    /**
+     * The bucket must not be a dead end. A rule published later can read a message the heuristic
+     * didn't think was financial at all, and the re-parse walk has to reach it — otherwise skipped
+     * is the one status no rule could ever rescue.
+     */
+    @Test
+    fun reparseReachesSkippedMessagesAndPromotesWhatItCanRead() = runBlocking {
+        val body = "Reminder: your order of Rs 1,299 is out for delivery. Track it in the app."
+        repository.ingest("AD-SOMEBK", body, Instant.fromEpochMilliseconds(1_785_657_168_000))
+        assertEquals(1, db.rawSmsDao().observeByStatus(ParseStatus.DISCARDED).first().size)
+
+        val outcome = repository.reparseNeedsReview()
+
+        assertEquals("the walk must look at the skipped row", 1, outcome.checked)
+        // Nothing new parses it, so it stays put rather than being quietly dropped again.
+        assertEquals(0, outcome.cleared)
+        assertEquals(1, db.rawSmsDao().observeByStatus(ParseStatus.DISCARDED).first().size)
+    }
+
+    /** The manual escape hatch, for when you can see the heuristic was wrong. */
+    @Test
+    fun aSkippedMessageCanBeMovedToReviewByHand() = runBlocking {
+        val body = "Reminder: your order of Rs 1,299 is out for delivery. Track it in the app."
+        repository.ingest("AD-SOMEBK", body, Instant.fromEpochMilliseconds(1_785_657_168_000))
+        val skipped = db.rawSmsDao().observeByStatus(ParseStatus.DISCARDED).first().single()
+
+        repository.moveToReview(skipped)
+
+        assertEquals(0, db.rawSmsDao().observeByStatus(ParseStatus.DISCARDED).first().size)
+        assertEquals(1, repository.observeNeedsReview().first().size)
+    }
 }

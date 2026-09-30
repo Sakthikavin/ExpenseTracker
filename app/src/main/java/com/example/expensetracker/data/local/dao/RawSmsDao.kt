@@ -17,6 +17,22 @@ interface RawSmsDao {
     @Query("SELECT * FROM raw_sms WHERE id = :id")
     suspend fun getById(id: Long): RawSmsEntity?
 
+    @Query("SELECT COUNT(*) FROM raw_sms WHERE parseStatus = :status")
+    fun observeCountByStatus(status: ParseStatus): Flow<Int>
+
+    /**
+     * Caps a status at its newest [keep] rows. Only [ParseStatus.DISCARDED] is pruned: those rows
+     * are a diagnostic record of messages the heuristic turned away, not financial history, and
+     * left uncapped they'd accumulate every amount-bearing promotional SMS the phone ever receives.
+     * Every other status is kept forever — a `PARSED` row is the evidence behind a transaction.
+     */
+    @Query(
+        "DELETE FROM raw_sms WHERE parseStatus = :status AND id NOT IN (" +
+            "SELECT id FROM raw_sms WHERE parseStatus = :status ORDER BY receivedAt DESC, id DESC LIMIT :keep" +
+            ")",
+    )
+    suspend fun pruneStatusToNewest(status: ParseStatus, keep: Int): Int
+
     /**
      * One page of rows in a status, newest first, starting strictly after (`beforeAt`, `beforeId`) —
      * keyset paging, which is what lets

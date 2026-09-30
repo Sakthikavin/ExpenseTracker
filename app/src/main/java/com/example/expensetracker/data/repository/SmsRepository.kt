@@ -24,7 +24,7 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 
 /** Which bucket [SmsRepository.ingest] sorted a message into — what the SMS history importer counts. */
-enum class IngestResult { IMPORTED, NEEDS_REVIEW, IGNORED }
+enum class IngestResult { IMPORTED, NEEDS_REVIEW, IGNORED, DISCARDED }
 
 /** What [SmsRepository.reparseNeedsReview] did: how many queued messages it re-read, and how many left the queue. */
 data class ReparseOutcome(val checked: Int, val cleared: Int)
@@ -40,6 +40,8 @@ class SmsRepository(
     private val merchantCategoryRuleRepository: MerchantCategoryRuleRepository? = null,
     /** Overridable so a test can cross page boundaries without queueing thousands of rows. */
     private val reparsePageSize: Int = REPARSE_PAGE_SIZE,
+    /** Overridable for the same reason — a test shouldn't have to ingest 200 messages to see the cap. */
+    private val discardedKeep: Int = DISCARDED_KEEP,
 ) {
     fun observeNeedsReview(): Flow<List<RawSmsEntity>> = rawSmsDao.observeByStatus(ParseStatus.NEEDS_REVIEW)
 
@@ -87,7 +89,16 @@ class SmsRepository(
                 )
                 return IngestResult.IGNORED
             }
-            // Doesn't look financial at all — not worth a row.
+            // Mentions money but didn't look like a bank alert. Kept, capped, and visible in
+            // Settings — the heuristic is a guess, and this is the only place its misses show up.
+            ParseOutcome.Discarded -> {
+                val rowId = rawSmsDao.insert(
+                    RawSmsEntity(sender = sender, body = body, receivedAt = receivedAt, parseStatus = ParseStatus.DISCARDED),
+                )
+                if (rowId != DUPLICATE_ROW_ID) rawSmsDao.pruneStatusToNewest(ParseStatus.DISCARDED, discardedKeep)
+                return IngestResult.DISCARDED
+            }
+            // Doesn't look financial at all, and never mentioned money — not worth a row.
             ParseOutcome.Ignored -> return IngestResult.IGNORED
         }
     }
@@ -213,15 +224,35 @@ class SmsRepository(
      * main thread alongside the sync that triggered it.
      */
     suspend fun reparseNeedsReview(): ReparseOutcome {
+        val review = walkUnparsed(ParseStatus.NEEDS_REVIEW)
+        // Skipped messages get the same second chance. A rule can read a message the tier-2
+        // heuristic didn't think was financial at all, and without this pass the bin is a dead end:
+        // the one bucket a published rule could never reach.
+        val discarded = walkUnparsed(ParseStatus.DISCARDED)
+        return ReparseOutcome(
+            checked = review.checked + discarded.checked,
+            cleared = review.cleared + discarded.cleared,
+        )
+    }
+
+    /**
+     * Re-parses every row in [status], newest first, a page at a time.
+     *
+     * A row only ever moves *forward* here — into a transaction, into review, or into ignored.
+     * Nothing is demoted, so a row already in the review queue stays there even if today's
+     * heuristic would no longer have admitted it: the user has seen it, and taking it away again
+     * would be the same disappearing act this whole mechanism exists to prevent.
+     */
+    private suspend fun walkUnparsed(status: ParseStatus): ReparseOutcome {
         var checked = 0
         var cleared = 0
-        // Walk by keyset rather than offset: rows cleared below leave NEEDS_REVIEW while the walk
+        // Walk by keyset rather than offset: rows cleared below leave the status while the walk
         // is still going, and an offset would then step over that many rows it never looked at.
         var beforeAt = Instant.DISTANT_FUTURE.toEpochMilliseconds()
         var beforeId = Long.MAX_VALUE
 
         while (true) {
-            val page = rawSmsDao.getPageByStatus(ParseStatus.NEEDS_REVIEW, beforeAt, beforeId, reparsePageSize)
+            val page = rawSmsDao.getPageByStatus(status, beforeAt, beforeId, reparsePageSize)
             if (page.isEmpty()) break
             for (rawSms in page) {
                 checked++
@@ -235,7 +266,13 @@ class SmsRepository(
                         rawSmsDao.update(rawSms.copy(parseStatus = ParseStatus.IGNORED))
                         cleared++
                     }
-                    ParseOutcome.NeedsReview, ParseOutcome.Ignored -> Unit
+                    // A skipped message the heuristic now recognises — it leaves the bin for the
+                    // queue. Already-queued rows are untouched; this is the promotion case.
+                    ParseOutcome.NeedsReview -> if (status == ParseStatus.DISCARDED) {
+                        rawSmsDao.update(rawSms.copy(parseStatus = ParseStatus.NEEDS_REVIEW))
+                        cleared++
+                    }
+                    ParseOutcome.Discarded, ParseOutcome.Ignored -> Unit
                 }
             }
             val last = page.last()
@@ -244,6 +281,20 @@ class SmsRepository(
             if (page.size < reparsePageSize) break
         }
         return ReparseOutcome(checked = checked, cleared = cleared)
+    }
+
+    /** The skipped-message bucket, newest first — what Settings → "Messages I skipped" shows. */
+    fun observeDiscarded(): Flow<List<RawSmsEntity>> = rawSmsDao.observeByStatus(ParseStatus.DISCARDED)
+
+    fun observeDiscardedCount(): Flow<Int> = rawSmsDao.observeCountByStatus(ParseStatus.DISCARDED)
+
+    /**
+     * Moves a skipped message into the review queue by hand — the escape hatch for when the
+     * heuristic was wrong and you can see that it was. From there it behaves like any queued
+     * message: confirmable into a transaction, or submittable for a rule.
+     */
+    suspend fun moveToReview(rawSms: RawSmsEntity) {
+        rawSmsDao.update(rawSms.copy(parseStatus = ParseStatus.NEEDS_REVIEW))
     }
 
     /** Remembers that this message's template went off for a rule, so it isn't offered again. */
@@ -443,6 +494,13 @@ class SmsRepository(
          * how much of the queue is held in memory at once, nothing more.
          */
         const val REPARSE_PAGE_SIZE = 500
+
+        /**
+         * How many skipped messages are kept. They're a diagnostic trail, not history: enough to
+         * see what the heuristic has been turning away lately, few enough that an inbox full of
+         * amount-bearing promotional SMS can't grow the database without bound.
+         */
+        const val DISCARDED_KEEP = 200
 
         /**
          * Wording that marks a message as a bank-transfer confirmation rather than an ordinary

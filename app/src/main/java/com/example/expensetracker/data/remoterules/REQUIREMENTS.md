@@ -228,6 +228,11 @@ manual-fix flow:
   them and so no rule published later can reach them. Walked newest-first in pages by keyset, not
   `OFFSET` — rows leave the status as they clear, and an offset would then step over that many
   rows it never examined.
+- The same walk covers `DISCARDED` rows (the skipped-message bucket, §5 tier 6): a rule can read a
+  message the tier-2 heuristic didn't think was financial at all, and without this pass that bucket
+  is the one status no published rule could ever rescue. A row only moves forward — into a
+  transaction, into review, or into ignored — so a row the user has already seen in the queue is
+  never taken back off them.
 
 ### 8.2 Manual
 
