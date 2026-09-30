@@ -17,9 +17,27 @@ interface RawSmsDao {
     @Query("SELECT * FROM raw_sms WHERE id = :id")
     suspend fun getById(id: Long): RawSmsEntity?
 
-    /** Most recent first, so a capped re-parse looks at the messages a new rule is likeliest about. */
-    @Query("SELECT * FROM raw_sms WHERE parseStatus = :status ORDER BY receivedAt DESC LIMIT :limit")
-    suspend fun getByStatus(status: ParseStatus, limit: Int): List<RawSmsEntity>
+    /**
+     * One page of rows in a status, newest first, starting strictly after (`beforeAt`, `beforeId`) —
+     * keyset paging, which is what lets
+     * [reparseNeedsReview][com.example.expensetracker.data.repository.SmsRepository.reparseNeedsReview]
+     * walk the whole queue. `OFFSET` can't: rows that a new rule clears leave the status mid-walk,
+     * so every later offset would skip that many unexamined rows.
+     *
+     * `receivedAt` alone isn't a unique key — two alerts can share a millisecond — so `id` breaks
+     * the tie and keeps the walk from stalling on or skipping past them.
+     */
+    @Query(
+        "SELECT * FROM raw_sms WHERE parseStatus = :status " +
+            "AND (receivedAt < :beforeAt OR (receivedAt = :beforeAt AND id < :beforeId)) " +
+            "ORDER BY receivedAt DESC, id DESC LIMIT :limit",
+    )
+    suspend fun getPageByStatus(
+        status: ParseStatus,
+        beforeAt: Long,
+        beforeId: Long,
+        limit: Int,
+    ): List<RawSmsEntity>
 
     /**
      * Returns -1 when the unique (sender, body, receivedAt) index rejects the row as a duplicate,

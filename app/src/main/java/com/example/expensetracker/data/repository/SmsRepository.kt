@@ -38,6 +38,8 @@ class SmsRepository(
     private val transferRepository: TransferRepository? = null,
     /** Optional so tests can exercise ingestion without merchant-rule machinery. */
     private val merchantCategoryRuleRepository: MerchantCategoryRuleRepository? = null,
+    /** Overridable so a test can cross page boundaries without queueing thousands of rows. */
+    private val reparsePageSize: Int = REPARSE_PAGE_SIZE,
 ) {
     fun observeNeedsReview(): Flow<List<RawSmsEntity>> = rawSmsDao.observeByStatus(ParseStatus.NEEDS_REVIEW)
 
@@ -204,27 +206,44 @@ class SmsRepository(
      * (§8.1): a rule written for a message already sitting in review should clear it, without
      * waiting for the bank to send another one.
      *
-     * Capped at the most recent [REPARSE_LIMIT] rows — the backlog a new rule plausibly speaks to,
-     * bounded so a large queue can't turn a background sync into a long database write.
+     * Covers the **whole** queue, newest first, a page at a time. It used to stop at the newest 200
+     * rows, which left the oldest of a long queue permanently stuck: those rows are never re-read,
+     * so no rule published afterwards can ever reach them. The rule regexes are compiled once per
+     * sync, so a few thousand rows is milliseconds of regex work, and this already runs off the
+     * main thread alongside the sync that triggered it.
      */
     suspend fun reparseNeedsReview(): ReparseOutcome {
-        val pending = rawSmsDao.getByStatus(ParseStatus.NEEDS_REVIEW, REPARSE_LIMIT)
+        var checked = 0
         var cleared = 0
-        for (rawSms in pending) {
-            when (val outcome = parser.parse(rawSms.sender, rawSms.body)) {
-                is ParseOutcome.Parsed -> {
-                    recordParsed(rawSms, outcome.parsed)
-                    cleared++
+        // Walk by keyset rather than offset: rows cleared below leave NEEDS_REVIEW while the walk
+        // is still going, and an offset would then step over that many rows it never looked at.
+        var beforeAt = Instant.DISTANT_FUTURE.toEpochMilliseconds()
+        var beforeId = Long.MAX_VALUE
+
+        while (true) {
+            val page = rawSmsDao.getPageByStatus(ParseStatus.NEEDS_REVIEW, beforeAt, beforeId, reparsePageSize)
+            if (page.isEmpty()) break
+            for (rawSms in page) {
+                checked++
+                when (val outcome = parser.parse(rawSms.sender, rawSms.body)) {
+                    is ParseOutcome.Parsed -> {
+                        recordParsed(rawSms, outcome.parsed)
+                        cleared++
+                    }
+                    // A sender newly added to discardSenders: the queue should stop showing its noise.
+                    ParseOutcome.IgnoredAsNoise -> {
+                        rawSmsDao.update(rawSms.copy(parseStatus = ParseStatus.IGNORED))
+                        cleared++
+                    }
+                    ParseOutcome.NeedsReview, ParseOutcome.Ignored -> Unit
                 }
-                // A sender newly added to discardSenders: the queue should stop showing its noise.
-                ParseOutcome.IgnoredAsNoise -> {
-                    rawSmsDao.update(rawSms.copy(parseStatus = ParseStatus.IGNORED))
-                    cleared++
-                }
-                ParseOutcome.NeedsReview, ParseOutcome.Ignored -> Unit
             }
+            val last = page.last()
+            beforeAt = last.receivedAt.toEpochMilliseconds()
+            beforeId = last.id
+            if (page.size < reparsePageSize) break
         }
-        return ReparseOutcome(checked = pending.size, cleared = cleared)
+        return ReparseOutcome(checked = checked, cleared = cleared)
     }
 
     /** Remembers that this message's template went off for a rule, so it isn't offered again. */
@@ -419,8 +438,11 @@ class SmsRepository(
     private companion object {
         const val DUPLICATE_ROW_ID = -1L
 
-        /** Cap on how much of the review backlog one sync re-parses (§8.1). */
-        const val REPARSE_LIMIT = 200
+        /**
+         * How many queued rows one re-parse page reads (§8.1). Not a cap on the walk — it bounds
+         * how much of the queue is held in memory at once, nothing more.
+         */
+        const val REPARSE_PAGE_SIZE = 500
 
         /**
          * Wording that marks a message as a bank-transfer confirmation rather than an ordinary

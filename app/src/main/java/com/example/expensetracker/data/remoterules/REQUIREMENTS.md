@@ -215,9 +215,12 @@ manual-fix flow:
 - On app launch, at most once per 24h: `RemoteRulesRepository.syncIfDue()`.
 - `RemoteRuleSyncWorker` also runs daily in the background (WorkManager, unmetered network
   not required — this payload is tiny).
-- On a version bump, immediately re-run every `NEEDS_REVIEW` row (cap: most recent 200)
-  against the new rule set, so a pull clears matching backlog without waiting for the next
-  SMS to arrive.
+- On a version bump, immediately re-run **every** `NEEDS_REVIEW` row against the new rule set, so
+  a pull clears matching backlog without waiting for the next SMS to arrive. No cap: a capped
+  re-parse leaves the oldest rows of a long queue permanently stuck, because nothing ever re-reads
+  them and so no rule published later can reach them. Walked newest-first in pages by keyset, not
+  `OFFSET` — rows leave the status as they clear, and an offset would then step over that many
+  rows it never examined.
 
 ### 8.2 Manual
 

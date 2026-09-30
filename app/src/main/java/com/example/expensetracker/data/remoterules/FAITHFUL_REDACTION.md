@@ -116,8 +116,8 @@ slice the text between matches.)
 
 - [x] §3 redactor changes, with `RedactorTest` expectations updated (`Avl Bal Rs.<BAL>`).
 - [x] §4 `RealMessages` corpus + `RedactorInvariantTest` (red before §3, green after).
-- [ ] §5 full-queue re-parse with keyset paging + test with more than 200 rows.
-- [x] REQUIREMENTS.md §6.1 (the invariant, `<D{n}>`, `<DATEW>`); §8.1 (no cap) with §5.
+- [x] §5 full-queue re-parse with keyset paging + test with more than 200 rows.
+- [x] REQUIREMENTS.md §6.1 (the invariant, `<D{n}>`, `<DATEW>`) and §8.1 (no cap).
 - [ ] Release; on the phone, Check now after the next rules version clears old TMB messages.
 
 ## 8. Follow-up found while doing §4: two real messages can't be submitted at all

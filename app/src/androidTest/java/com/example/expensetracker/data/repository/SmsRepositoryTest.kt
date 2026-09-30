@@ -515,6 +515,71 @@ class SmsRepositoryTest {
         assertEquals("₹5 clears the floor and still needs review", IngestResult.NEEDS_REVIEW, realResult)
     }
 
+    // --- re-parsing the review queue after a rules pull (§8.1) ---
+
+    /** Financial enough to sit in review, structurally unmatched by any template, so it stays put. */
+    private fun filler(index: Int) =
+        "Update: transfer of Rs 999 was processed successfully, ref unavailable. #$index"
+
+    private suspend fun queue(body: String, receivedAt: Long, sender: String = "AD-FILLER") =
+        db.rawSmsDao().insert(
+            RawSmsEntity(
+                sender = sender,
+                body = body,
+                receivedAt = Instant.fromEpochMilliseconds(receivedAt),
+                parseStatus = ParseStatus.NEEDS_REVIEW,
+            ),
+        )
+
+    /**
+     * The stuck-backlog bug: a re-parse capped at the newest 200 rows never re-reads anything older,
+     * so a rule published later can't ever clear it. Here the one parseable message is the *oldest*
+     * of 250.
+     */
+    @Test
+    fun reparseReachesTheOldestRowOfALongQueue() = runBlocking {
+        val base = 1_785_000_000_000
+        val oldestId = queue(federalSms, base, sender = "AD-FEDBNK")
+        repeat(249) { queue(filler(it), base + (it + 1) * 60_000L) }
+
+        val outcome = repository.reparseNeedsReview()
+
+        assertEquals("the whole queue must be re-read, not the newest 200", 250, outcome.checked)
+        assertEquals(1, outcome.cleared)
+        val oldest = db.rawSmsDao().getById(oldestId)!!
+        assertEquals(ParseStatus.PARSED, oldest.parseStatus)
+        assertNotNull("the cleared row must point at the transaction it produced", oldest.linkedTransactionId)
+    }
+
+    /**
+     * Rows leave NEEDS_REVIEW as the walk clears them, so paging by `OFFSET` would step over that
+     * many rows it never looked at. Every fourth row here is parseable — spread across ten pages,
+     * an offset-paged walk would miss most of them.
+     */
+    @Test
+    fun reparsePagesWithoutSkippingRowsThatClearMidWalk() = runBlocking {
+        val paged = SmsRepository(
+            rawSmsDao = db.rawSmsDao(),
+            learnedPatternDao = db.learnedPatternDao(),
+            transactionRepository = TransactionRepository(db.transactionDao()),
+            parser = SmsParser(db.learnedPatternDao()),
+            transferRepository = transferRepository,
+            reparsePageSize = 25,
+        )
+        val base = 1_785_000_000_000
+        repeat(100) { index ->
+            // Distinct references: same-reference messages are one payment, and would be merged.
+            val body = if (index % 4 == 0) federalSms.replace("621312687340", "62131268%04d".format(index)) else filler(index)
+            queue(body, base + index * 60_000L, sender = if (index % 4 == 0) "AD-FEDBNK" else "AD-FILLER")
+        }
+
+        val outcome = paged.reparseNeedsReview()
+
+        assertEquals(100, outcome.checked)
+        assertEquals("every parseable row must be found, whichever page it sat on", 25, outcome.cleared)
+        assertEquals(75, db.rawSmsDao().observeByStatus(ParseStatus.NEEDS_REVIEW).first().size)
+    }
+
     // --- one-time backlog cleanup ---
 
     /** Rows queued before the permanent sender filter existed must be movable in one pass. */
