@@ -33,7 +33,7 @@ settle when it's built:
   bumped, so the platform can't block installing an older APK over a newer database — which throws
   rather than wiping, but leaves the app unusable until the right APK is installed.
 
-## Search by message text — Transactions tab and Review tab
+## Search by message text — Transactions tab, Review tab, Messages I skipped
 
 Find a transaction or a queued message by typing words that appear in **the raw SMS**, not just
 the merchant name. The message text is what the user actually remembers ("that Swiggy one with the
@@ -41,6 +41,10 @@ weird ref"), and it's the only searchable handle on a review-queue row, which ha
 amount parsed out of it yet.
 
 - **Review tab** — matches `raw_sms.body` (and probably `sender`) of the rows already on screen.
+- **Messages I skipped** (`SkippedMessagesScreen`) — the same shape as the review tab, over
+  `ParseStatus.DISCARDED` rows. Arguably needs it most: the list's whole job is answering "is the
+  parser turning away anything from my bank?", and today that means reading up to 200 rows by eye.
+  Searching by `sender` matters as much as by body here.
 - **Transactions tab** — the body lives one hop away, on the `raw_sms` row a transaction points at
   via `rawSmsId`, and is loaded lazily per row today (`OriginalMessagePanel`). Searching it needs a
   query that reaches the message from the transaction, not the current per-row lazy load.
