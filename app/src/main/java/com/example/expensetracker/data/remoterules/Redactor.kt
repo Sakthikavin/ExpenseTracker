@@ -58,10 +58,22 @@ object Redactor {
             { m -> "${m.groupValues[1]}${m.groupValues[2]}<REF>" },
 
         // Phone numbers (helplines, "call 18002586161"); runs this late so refs are already gone.
-        Regex("""\b(?:\+?91[\-\s]?)?\d{10,12}\b""") to { "<PHONE>" },
+        // Narrow to shapes that really are phone numbers — an Indian mobile, optionally with the
+        // country code, or a 1800 helpline. A bare `\d{10,12}` also swallowed the Axis mandate id
+        // `APY/500405010905/…`, and a template claiming that's a phone number misleads whoever
+        // writes the rule exactly as the old balance shape did.
+        Regex("""\b(?:\+?91[\-\s]?)?[6-9]\d{9}\b|\b1800\d{6,7}\b""") to { "<PHONE>" },
 
         // UPI / email handles: the owner goes, the fact that it *is* a handle stays.
         Regex("""[\w.\-]+@[\w.\-]+""") to { "<VPA>" },
+
+        // Last resort, and last in the list on purpose: any digit run long enough for
+        // [unredactedHints] to flag, that none of the rules above recognised — a mandate id, a
+        // customer id, a reference buried in a narration with no label beside it. Without this the
+        // app can build a template it then refuses to upload, which leaves exactly the messages
+        // that need a rule unable to ask for one. Placing it after the handle rule matters: run
+        // earlier and it would break `pinelabs.11093315@pineaxis` apart before `<VPA>` sees it.
+        Regex("""\d{5,}""") to { "<NUM>" },
     )
 
     /** `<D4>` for `1234` — the count is shape a rule needs, the digits themselves are not. */
@@ -75,6 +87,11 @@ object Redactor {
      * What the console flags on inbound submissions (`unredactedHints` in its `lib/grouping.js`).
      * A non-empty result means redaction missed something, and the app must not upload the template
      * (REQUIREMENTS §6.1.1).
+     *
+     * The `<NUM>` catch-all above shares this function's 5-digit threshold, so "a long number"
+     * should now be unreachable for anything [redact] produces — `RedactorInvariantTest` holds that
+     * over the real corpus. This stays as the check of record: it's the same rule the console
+     * applies to inbound submissions, and it must keep guarding templates from anywhere else.
      */
     fun unredactedHints(template: String): List<String> {
         val plain = template.replace(Regex("""<[A-Z]+\d*>"""), " ")

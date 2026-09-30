@@ -128,7 +128,8 @@ message it came from.
 | Balances | only the number goes; the phrase, the currency token and its spacing stay | `Avl Bal Rs.15,342.50` → `Avl Bal Rs.<BAL>`, `Avl Bal:INR 1,234` → `Avl Bal:INR <BAL>` |
 | Dates / times | replaced with `<DATE>` / `<TIME>`, or `<DATEW>` when the date contains whitespace (a rule's `\S+` date group can't read one) | `29-09-26` → `<DATE>`, `30 Sep 2026` → `<DATEW>` |
 | Reference / UTR numbers | replaced with `<REF>` | `Ref 123456789012` → `Ref <REF>` |
-| Phone numbers | replaced with `<PHONE>` | `917036165000` → `<PHONE>` |
+| Phone numbers | replaced with `<PHONE>`, but only for shapes that really are one — an Indian mobile with optional country code, or a `1800` helpline. A looser rule called any 10–12 digit run a phone number, including mandate ids | `917036165000` → `<PHONE>`, `18002586161` → `<PHONE>` |
+| Any other long digit run | replaced with `<NUM>` as a last resort, after every rule above: a mandate id, a customer id, a reference hyphen-joined into a narration with no label to key on. Shares the §6.1.1 threshold, so redaction can't produce a template the app then refuses to upload. A constant prefix stays, being shape and a usable anchor | `APY/500405010905/920010018` → `APY/<NUM>/<NUM>`, `MUM-HDFCH00842011992-NET` → `MUM-HDFCH<NUM>-NET` |
 | VPA / UPI handles | keep the structure, mask the handle owner | `merchant@ybl` → `<VPA>` (merchant *name* text elsewhere is kept — see below) |
 | URLs / bank short links | replaced with `<URL>`, run **first** (before date/time/ref) so digits in a link aren't half-masked into `<DATE>`/`<REF>` fragments | `Modify:https://1.hdfc.bank.in/HDFCBK/s/a/E0WMgeP0` → `Modify:<URL>` |
 | Merchant / payee name | **kept** — this is what most rules need to anchor on, and it's already a payee name the user chose to transact with, not private banking data |

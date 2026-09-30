@@ -44,6 +44,49 @@ class RedactorInvariantTest {
         }
     }
 
+    /**
+     * The other half of faithfulness: a template the app then refuses to upload (§6.1.1) is no use
+     * either. Two real messages used to fail here — the Axis mandate id and an unlabelled reference
+     * inside the NPS narration — which meant exactly the messages needing a rule couldn't ask.
+     */
+    @Test
+    fun `every real message produces a template the app is allowed to upload`() {
+        for (message in RealMessages.all) {
+            val template = Redactor.redact(message)
+            assertEquals(
+                "redaction left something the pre-upload check rejects:\n  template: $template",
+                emptyList<String>(),
+                Redactor.unredactedHints(template),
+            )
+        }
+    }
+
+    @Test
+    fun `an identifier no other rule recognises is still masked`() {
+        // A mandate id, and a reference hyphen-joined into a narration with no label beside it.
+        assertTrue(Redactor.redact(RealMessages.axisApy).contains("APY/<NUM>/<NUM>"))
+        assertTrue(Redactor.redact(RealMessages.npsDebit).contains("MUM-HDFCH<NUM>-NET BANKING"))
+    }
+
+    /** `HDFCH` prefixes every HDFC NEFT reference, so it's shape — and an anchor a rule can use. */
+    @Test
+    fun `masking a bare identifier keeps a constant prefix`() {
+        assertEquals("MUM-HDFCH<NUM>-NET", Redactor.redact("MUM-HDFCH00842011992-NET"))
+    }
+
+    @Test
+    fun `real phone numbers are still recognised as phone numbers`() {
+        for (number in listOf("917036165000", "919951860002", "7308080808", "18002586161")) {
+            assertEquals("<PHONE>", Redactor.redact(number))
+        }
+    }
+
+    /** A 12-digit mandate id is not a phone number, and a template must not claim it is. */
+    @Test
+    fun `a long id that is not a phone number is masked as a number`() {
+        assertEquals("<NUM>", Redactor.redact("500405010905"))
+    }
+
     /** The regression itself: this is the template the console was given, minus its `Rs.`. */
     @Test
     fun `the balance keeps its currency token and spacing`() {

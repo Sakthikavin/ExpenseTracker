@@ -118,19 +118,35 @@ slice the text between matches.)
 - [x] §4 `RealMessages` corpus + `RedactorInvariantTest` (red before §3, green after).
 - [x] §5 full-queue re-parse with keyset paging + test with more than 200 rows.
 - [x] REQUIREMENTS.md §6.1 (the invariant, `<D{n}>`, `<DATEW>`) and §8.1 (no cap).
+- [x] §8 `<NUM>` catch-all + narrowed `<PHONE>`, so no real message is unsubmittable.
 - [ ] Release; on the phone, Check now after the next rules version clears old TMB messages.
 
-## 8. Follow-up found while doing §4: two real messages can't be submitted at all
+## 8. Two real messages that couldn't be submitted at all — fixed
 
-Not caused by §3, and not fixed here. Two messages in the corpus leave a bare digit run behind, so
-`unredactedHints` flags them and §6.1.1 refuses the upload:
+Found while doing §4, fixed after it. Both left a bare digit run, so `unredactedHints` flagged them
+and §6.1.1 refused the upload — the review queue showed "Not sent — the message still shows a long
+number after redaction" for exactly the two messages most in need of a rule. Nothing was marked
+submitted on that path, so no rows needed repairing.
 
-| Message | Template fragment | What the run is |
+| Message | Was | Now |
 |---|---|---|
-| `axisApy` | `APY/<PHONE>/920010018` | the second half of the mandate id (the first half was eaten as `<PHONE>`) |
-| `npsDebit` | `MUM-HDFCH00842011992-NET BANKING` | a NEFT narration reference, hyphen-joined with no label beside it for the `<REF>` rule to key on |
+| `axisApy` | `APY/<PHONE>/920010018` | `APY/<NUM>/<NUM>` |
+| `npsDebit` | `MUM-HDFCH00842011992-NET BANKING` | `MUM-HDFCH<NUM>-NET BANKING` |
 
-Both fail in the safe direction — nothing leaks, the phone just can't ask for a rule for exactly
-the messages that need one. A fix needs the `<REF>` rule to recognise a reference embedded in a
-hyphen-joined narration, and the account-block rule to mask a mandate id; both risk taking shape a
-rule needs, so they want their own change and their own corpus evidence.
+1. **`<NUM>` catch-all**, last in `RULES` on purpose: any `\d{5,}` run none of the rules above
+   recognised. It shares `unredactedHints`' threshold, so "a long number" is now unreachable for
+   anything `redact` produces. It has to sit *after* the handle rule — run earlier and it breaks
+   `pinelabs.11093315@pineaxis` apart before `<VPA>` matches it.
+2. **Narrowed `<PHONE>`** to `(?:\+?91)?[6-9]\d{9}` or `1800\d{6,7}`. The old `\d{10,12}` called the
+   Axis mandate id a phone number, which misleads a rule author the same way the old balance shape
+   did. All four helpline numbers in the corpus still read as `<PHONE>`.
+
+`HDFCH` is kept because it prefixes every HDFC NEFT reference: that's shape, and it gives a rule
+something to anchor on (`HDFCH(?<ref>\d+)`).
+
+Cost, accepted knowingly: the catch-all is blunt. A 5+ digit run that was useful anchor text gets
+masked too. It fails safe — masked, never leaked — but the invariant only proves a template still
+fits its message, not that it's still useful to write a rule against.
+
+Console side: `<NUM>` is a new placeholder name, so its synthetic-sample generation needs to know
+about it, as `<DATEW>` did.
