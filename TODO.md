@@ -4,6 +4,35 @@ Agreed work not yet started. Design docs own the detail; this file owns the "not
 Spec-level backlog lives with its spec — see `data/remoterules/FAITHFUL_REDACTION.md` §7–§8 and
 [FUTURE_V2.md](FUTURE_V2.md) for v2 family sharing.
 
+## Backup and restore
+
+The database is the user's **only** copy of their financial history, and nothing in the app can
+put it back. Today's whole answer is "Export all transactions to a local CSV" — transactions only,
+and there is no import, so it's a readable record rather than a restore path. Everything that
+isn't SMS-derived is unrecoverable: manually added transactions, hand-assigned categories, merchant
+rules, budgets, bills, the own-accounts setup behind self-transfer detection, learned patterns.
+(SMS-derived transactions can be rebuilt with Settings → Import SMS history, as long as the
+messages are still in the phone's inbox.)
+
+Wanted: export the database file to a location the user picks, and import one back. Points to
+settle when it's built:
+
+- Copy the file with SQLite's own backup/`VACUUM INTO`, or close the database first — a naive file
+  copy of a live database with a WAL can restore as a corrupt or half-written file.
+- Restoring has to replace the live database and then reopen it, which means either restarting the
+  app or rebuilding the Room instance behind `AppDatabase.getInstance`'s singleton.
+- An import must refuse a file from a **newer** schema version than the running app (Room can
+  migrate forward, never back), and state plainly that it replaces everything rather than merging.
+- The export is unencrypted financial history leaving the app's sandbox: say so at the point of
+  export, and consider a passphrase.
+- Related, from the upgrade discussion: `android:allowBackup="true"` with the generated sample rule
+  files means Android's auto-backup already ships the database to Google's cloud by default. Decide
+  deliberately whether that stays on, and exclude the database in `backup_rules.xml` /
+  `data_extraction_rules.xml` if not.
+- Also unrelated to backup but found alongside it: `versionCode` is still `1` and has never been
+  bumped, so the platform can't block installing an older APK over a newer database — which throws
+  rather than wiping, but leaves the app unusable until the right APK is installed.
+
 ## Search by message text — Transactions tab and Review tab
 
 Find a transaction or a queued message by typing words that appear in **the raw SMS**, not just
