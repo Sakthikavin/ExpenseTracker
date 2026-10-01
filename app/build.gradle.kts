@@ -10,10 +10,10 @@ android {
         version = release(37)
     }
 
-    // release.yml ships the **debug** APK as-is (see INSTALL_ON_PHONE.md) — there is no separate
-    // signed release build friends/family install. So the debug/release build *type* must not be
-    // what selects the Firestore backend; that would point every real install at the local
-    // emulator. Local emulator testing opts in instead via `-PfirestoreEmulator=true` (or
+    // The build *type* must not be what selects the Firestore backend: a debug build is what gets
+    // installed for testing, and tying the emulator to it would point every such install at a
+    // local emulator that isn't running. Local emulator testing opts in instead via
+    // `-PfirestoreEmulator=true` (or
     // `firestoreEmulator=true` in a gitignored gradle.properties), which nothing sets by default.
     val useEmulatorRules = (findProperty("firestoreEmulator") as String?)?.toBoolean() ?: false
 
@@ -21,15 +21,19 @@ android {
         applicationId = "com.example.expensetracker"
         minSdk = 24
         targetSdk = 37
-        // Bump both on every release, in step with the git tag (`v1.1` → `versionName = "1.1"`,
-        // `versionCode = 2`). `versionName` is the only thing a submission reports to the rules
+        // Bump both on every release, in step with the git tag (`v1.1.0` → `versionName = "1.1.0"`,
+        // `versionCode = 2`). Tags stay three-segment, because the release workflow's manual
+        // "Run workflow" path bumps the last segment of the latest tag — from a two-segment tag it
+        // would step the minor version every time.
+        //
+        // `versionName` is the only thing a submission reports to the rules
         // console (`SubmissionRepository`), and it's how the console tells which redactor built a
         // template — left at "1.0" forever, it has to keep compensating for templates from builds
         // that no longer exist. `versionCode` is what the platform compares: raising it is what
         // makes a later APK an update, and what lets it refuse an *older* APK over a newer
         // database, which Room can only fail on.
         versionCode = 2
-        versionName = "1.1"
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

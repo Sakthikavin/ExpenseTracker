@@ -1,0 +1,106 @@
+{
+  "version": 0,
+  "updatedAt": "2026-10-01T00:00:00Z",
+  "discardSenders": [],
+  "ignoreRules": [],
+  "rules": [
+    {
+      "id": "generic_block_debit_v1",
+      "senders": [
+        "*"
+      ],
+      "direction": "debit",
+      "pattern": "(?im)^(?:sent|debited|debit|spent|paid|withdrawn|transferred)\\s+(?:rs\\.?|inr)\\s*(?<amount>\\d[\\d,]*(?:\\.\\d{1,2})?)\\s*$[\\s\\S]*?^(?:to|payee|beneficiary)\\s*[:\\-]?\\s*(?<merchant>.+)$",
+      "fieldMap": {
+        "amount": 1,
+        "merchant": 2
+      },
+      "priority": 6,
+      "addedAt": "2026-10-01T00:00:00Z"
+    },
+    {
+      "id": "generic_block_scheme_debit_v1",
+      "senders": [
+        "*"
+      ],
+      "direction": "debit",
+      "pattern": "(?im)^(?:debit|debited)\\s+(?:rs\\.?|inr)\\s*(?<amount>\\d[\\d,]*(?:\\.\\d{1,2})?)\\s*$[\\s\\S]*?^(?<merchant>[A-Z]{2,10})/\\S+",
+      "fieldMap": {
+        "amount": 1,
+        "merchant": 2
+      },
+      "priority": 5,
+      "addedAt": "2026-10-01T00:00:00Z"
+    },
+    {
+      "id": "generic_block_credit_v1",
+      "senders": [
+        "*"
+      ],
+      "direction": "credit",
+      "pattern": "(?im)^(?:received|credited)\\s+(?:rs\\.?|inr)\\s*(?<amount>\\d[\\d,]*(?:\\.\\d{1,2})?)\\s*$[\\s\\S]*?^(?:from|by)\\s*[:\\-]?\\s*(?<merchant>.+)$",
+      "fieldMap": {
+        "amount": 1,
+        "merchant": 2
+      },
+      "priority": 5,
+      "addedAt": "2026-10-01T00:00:00Z"
+    },
+    {
+      "id": "generic_debit_amount_first_v1",
+      "senders": [
+        "*"
+      ],
+      "direction": "debit",
+      "pattern": "(?i)(?:rs\\.?|inr)\\s*(?<amount>\\d[\\d,]*(?:\\.\\d{1,2})?)\\s+(?:has\\s+been\\s+)?(?:debited|debit|spent|paid|withdrawn|sent|transferred).*?\\b(?:towards|to|at|from)\\s+(?!a/c\\b|ac\\b|account\\b)(?<merchant>[A-Za-z0-9@._/\\-\\s]{2,40}?)(?:\\s+on\\b|\\s+ref\\b|\\s+via\\b|[.,]|$)",
+      "fieldMap": {
+        "merchant": 2,
+        "amount": 1
+      },
+      "priority": 4,
+      "addedAt": "2026-10-01T00:00:00Z"
+    },
+    {
+      "id": "generic_debit_verb_first_v1",
+      "senders": [
+        "*"
+      ],
+      "direction": "debit",
+      "pattern": "(?i)(?:debited|debit|spent|paid|withdrawn|sent|transferred)\\s+(?:by\\s+|of\\s+|for\\s+)?(?:rs\\.?|inr)\\s*(?<amount>\\d[\\d,]*(?:\\.\\d{1,2})?)\\b.*?\\b(?:towards|to|at|from)\\s+(?!a/c\\b|ac\\b|account\\b)(?<merchant>[A-Za-z0-9@._/\\-\\s]{2,40}?)(?:\\s+on\\b|\\s+ref\\b|\\s+via\\b|[.,]|$)",
+      "fieldMap": {
+        "merchant": 2,
+        "amount": 1
+      },
+      "priority": 3,
+      "addedAt": "2026-10-01T00:00:00Z"
+    },
+    {
+      "id": "generic_credit_amount_first_v1",
+      "senders": [
+        "*"
+      ],
+      "direction": "credit",
+      "pattern": "(?i)(?:rs\\.?|inr)\\s*(?<amount>\\d[\\d,]*(?:\\.\\d{1,2})?)\\s+(?:has\\s+been\\s+)?(?:credited|received).*?\\b(?:from|by|to)\\s+(?!a/c\\b|ac\\b|account\\b)(?<merchant>[A-Za-z0-9@._/\\-\\s]{2,40}?)(?:\\s+on\\b|\\s+ref\\b|\\s+via\\b|[.,]|$)",
+      "fieldMap": {
+        "amount": 1,
+        "merchant": 2
+      },
+      "priority": 2,
+      "addedAt": "2026-10-01T00:00:00Z"
+    },
+    {
+      "id": "generic_credit_verb_first_v1",
+      "senders": [
+        "*"
+      ],
+      "direction": "credit",
+      "pattern": "(?i)(?:credited|received)\\s+(?:by\\s+|of\\s+|for\\s+)?(?:rs\\.?|inr)\\s*(?<amount>\\d[\\d,]*(?:\\.\\d{1,2})?)\\b.*?\\b(?:from|by|to)\\s+(?!a/c\\b|ac\\b|account\\b)(?<merchant>[A-Za-z0-9@._/\\-\\s]{2,40}?)(?:\\s+on\\b|\\s+ref\\b|\\s+via\\b|[.,]|$)",
+      "fieldMap": {
+        "merchant": 2,
+        "amount": 1
+      },
+      "priority": 1,
+      "addedAt": "2026-10-01T00:00:00Z"
+    }
+  ]
+}

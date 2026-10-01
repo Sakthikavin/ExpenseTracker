@@ -12,7 +12,7 @@ Every submission carries `appVersion` (`SubmissionRepository.kt:53`), set from
 `BuildConfig.VERSION_NAME` (`di/AppContainer.kt:57`). That was `"1.0"` from the first release and
 never bumped, so every submission sent so far looks the same age.
 
-**Now bumped** to `versionName = "1.1"` / `versionCode = 2`, and the comment in
+**Now bumped** to `versionName = "1.1.0"` / `versionCode = 2`, and the comment in
 `app/build.gradle.kts` says to move both with every release and keep them in step with the git tag.
 From the next release on, `appVersion` is a real signal.
 
@@ -21,15 +21,14 @@ updated — a sideloaded app updates when its owner gets round to it. So the ret
 "no submissions reporting `1.0` for long enough to be sure", and until then the extra sample
 variations for old templates have to stay. That's the right call.
 
-This undercuts the compensation strategy in `FAITHFUL_REDACTION.md` §6 — vary the balance and the
-digit counts "for templates from older app versions" — because there is no signal for *which*
-version a template came from. It now matters for five placeholders rather than one: `<BAL>`,
-`<D`*n*`>`, `<NUM>`, `<DATEW>` and `<CODE>`. `rulesVersion` is the only other hint and it's a weak
-lower bound: it says which rule set the phone had, not which redactor built the template.
+Why it matters: the compensation strategy in `FAITHFUL_REDACTION.md` §6 — vary the balance and the
+digit counts "for templates from older app versions" — needs to know *which* version a template came
+from, and it now applies to five placeholders rather than one: `<BAL>`, `<D`*n*`>`, `<NUM>`,
+`<DATEW>` and `<CODE>`. `rulesVersion` is the only other hint and it's a weak lower bound: it says
+which rule set the phone had, not which redactor built the template.
 
-The fix is app-side (bump `versionName` every release). Until it lands, treat template shape itself
-as the only evidence of age — `bal is <BAL>` without a currency token means an old build, and so
-does a code sitting unmasked in a template.
+For everything already submitted, template shape is the only evidence of age — `bal is <BAL>`
+without a currency token means an old build, and so does a code sitting unmasked in a template.
 
 ## 2. Priority 5 is now load-bearing, not just a sort key
 
@@ -100,7 +99,7 @@ The existing route for over-admission is unchanged and is still the right one: a
 
 ## What the app side owes the console
 
-- [x] Bump `versionName` per release so §1 stops being true — done, `1.1` / `versionCode 2`, with
+- [x] Bump `versionName` per release so §1 stops being true — done, `1.1.0` / `versionCode 2`, with
       the standing instruction recorded at the bump itself.
 - [ ] Decide whether a submission says which queue it came from (§6). **Agreed with the console:
       the app does not add that field without saying so first**, because `firestore.rules` has to
