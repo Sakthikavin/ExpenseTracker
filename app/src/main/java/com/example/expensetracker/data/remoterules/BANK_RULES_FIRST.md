@@ -126,4 +126,5 @@ rule's date to win over `SmsDateParser`, or the balance stored, that's a separat
       (the code check), and `FAITHFUL_REDACTION.md` §3's side note closed.
 - [ ] Release, then Settings → Check now: FEDBNK UPI debits in review pick up the bank rule.
 - [ ] Console: publish the FEDBNK rule at priority ≥ 5, and add `<CODE>` to the submission check
-      and the synthetic-sample generator (§3).
+      and the synthetic-sample generator (§3). The full console-side list, including what the
+      console can no longer infer, is in `CONSOLE_HANDOFF.md`.
