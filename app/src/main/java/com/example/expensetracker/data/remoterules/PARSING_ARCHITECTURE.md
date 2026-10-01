@@ -1,4 +1,4 @@
-# One rule list: no built-in templates, no transfers, no duplicate matching
+# One rule list from the console: no built-in templates, no transfers, no duplicate matching
 
 Android-side spec. **Replaces `BANK_RULES_FIRST.md` §2** (the priority-5 split), which is
 implemented but not released. §3 (`<CODE>`) and §4 (`BAL to` → `<PHONE>`) of that file stay.
@@ -12,8 +12,9 @@ merchant guessing). Rules on the console can't see or change the last two, the p
 exists only to order them, and a bank rule silently loses some of the after-match fields that
 a template result would have had. Decided 2026-10-01:
 
-- **Keep:** one ordered rule list; turning `1,66,421.00` into paise; the date read from the
-  message; the review-queue heuristics.
+- **Keep:** one ordered rule list, synced from the console and nowhere else (no rules ship in the
+  app); turning `1,66,421.00` into paise; the date read from the message; the review-queue
+  heuristics.
 - **Drop:** `BankTemplates`, transfer pairing, duplicate matching by reference, merchant guessing.
   Duplicates and own-account transfers are handled with ignore rules and discarded senders.
 
@@ -21,7 +22,7 @@ a template result would have had. Decided 2026-10-01:
 
 ```
 SMS → ALWAYS_IGNORE → discardSenders → ignoreRules
-    → rules, highest priority first (published set, or the bundled default set before the first sync)
+    → rules, highest priority first (the cached published set; none before the first sync)
     → learned patterns → pre-notice → review heuristics → review / skipped
 ```
 
@@ -47,45 +48,57 @@ A rule (or ignore rule) whose senders contain `"*"` applies to every sender. In
 Older app versions compare senders literally, so they never match `"*"`. That's safe: they still
 have `BankTemplates`.
 
-## 4. Bundled default rules: `app/src/main/assets/default_rules.json`
+## 4. Rules only from the console; the generic ones are ordinary published rules
 
-Already written (by the console side), in the published `RemoteRuleSet` shape, version 0. Seven
-rules, all `senders: ["*"]`:
+No rules ship in the app. The four generic regexes `BankTemplates` used, and `BlockFormat`'s
+multi-line reading, become published rules with `senders: ["*"]` (the console keeps them in
+`data/generic-rules.json` for a one-time import):
 
 | id | priority | reads |
 |---|---|---|
 | `generic_block_debit_v1` | 6 | multi-line `Sent Rs.58.00` … `To Google India Digital Serv` (was `BlockFormat`) |
 | `generic_block_scheme_debit_v1` | 5 | multi-line `Debit INR 292.00` … `APY/…` → merchant `APY` (was `BlockFormat` scheme line) |
 | `generic_block_credit_v1` | 5 | multi-line `Received Rs.500.00` … `From ravi.k@ybl` |
-| `generic_debit_amount_first_v1` | 4 | the old `android_debit_amount_first_v1`, any sender |
-| `generic_debit_verb_first_v1` | 3 | the old `android_debit_verb_first_v1`, any sender |
-| `generic_credit_amount_first_v1` | 2 | the old `android_credit_amount_first_v1`, any sender |
-| `generic_credit_verb_first_v1` | 1 | the old `android_credit_verb_first_v1`, any sender |
+| `generic_debit_amount_first_v2` | 4 | the old `android_debit_amount_first_v1`, any sender |
+| `generic_debit_verb_first_v2` | 3 | the old `android_debit_verb_first_v1`, any sender |
+| `generic_credit_amount_first_v2` | 2 | the old `android_credit_amount_first_v1`, any sender |
+| `generic_credit_verb_first_v2` | 1 | the old `android_credit_verb_first_v1`, any sender |
+
+**Published as v16 (2026-10-01).** The four single-line rules are `_v2`: the old regexes with a
+better merchant ending. They skip a leading `VPA `, don't start at "your A/c" or "card", stop at
+` No `, and only end at `.`/`,` when it isn't inside a handle. So `landlord.ravi@ybl` stays whole
+instead of `VPA landlord`, and `VPA kumarstores@okaxis No 427381920113` becomes `kumarstores@okaxis`.
 
 The block rules use `(?im)` and `^…$` per line, so `To` must start a line: Axis's
 `WhatsApp BAL to 917036165000` can't become the payee (the reason `BlockFormat` read lines).
 
-- `RemoteRulesRepository`: before any successful sync (no cached set), load this asset as the
-  rule set. A synced set replaces it entirely; the console publishes the same seven rules, and
-  warns before publishing a version without a `"*"` rule.
-- Refresh the asset from the live `/rules/current` before each release (one `curl` of the public
-  document, converted; or keep this file and only update it when the generic rules change).
+**Before the first sync** the phone has no rules: every financial-looking message goes to review
+(or skipped), as if nothing matched. The first successful sync re-checks the whole review queue
+and the skipped messages (`reparseNeedsReview`, already in this build), so they clear without
+anything else. After that the cached set is used offline, as now.
 
-Checked on the console against the corpus in `RealMessages` (defaults alone, then with the live
-v15 bank rules):
+- **Import SMS history** syncs first: run `ruleSyncCoordinator.sync()` (or use the cached set if
+  there is one), then import. If there's no cached set and the sync fails, say so before importing:
+  "Couldn't load rules. Messages will go to review and be re-checked on the next sync."
+- `RemoteRulesRepository` with no cached set: `tryMatch` returns null, `isIgnoredMessage` false,
+  `isDiscardedSender` false (only `ALWAYS_IGNORE_SENDERS` applies). No fallback set.
 
-| message | today (templates) | defaults alone | with live bank rules |
+Checked on the console against the corpus in `RealMessages` (generic rules alone, then with the
+live v15 bank rules):
+
+| message | today (templates) | generic rules alone | with live bank rules |
 |---|---|---|---|
 | `axisApy` | debit 292.00, APY | same | same |
 | `hdfcUpi` | debit 58.00, Google India Digital Serv | same | same |
 | `federalUpi` | debit 1.00, KEERTHANA KU | same | same |
 | `npsCredit` | credit 5,000.00, SAKTHI KAVIN S S | same | same |
-| `npsDebit` | debit 5,000.00, **NPS Contribution** | debit 5,000.00, **HDFC Bank XX3941** | same as defaults |
+| `npsDebit` | debit 5,000.00, **NPS Contribution** | debit 5,000.00, **HDFC Bank XX3941** | same as alone |
 | `tmbCredit` / `tmbDebit` | (bank rules) | unparsed | `tmbank_credit_v1` / `tmbank_debited_with_v1` |
 | `canaraDebit` (`Dr.`) | review | review | review |
 
-The one regression is the NPS merchant (the remark guesser is gone). It's a bank-rule job: an
-HDFCBK rule for `debited from HDFC Bank XX… Info: NEFT Dr-…-(?<merchant>[^.-]+?)\s*\w?\. Avl bal`.
+The one regression is the NPS merchant (the remark guesser is gone). It's a bank-rule job, and this
+HDFCBK debit rule reads `NPS Contribution` from `npsDebit` (checked on the console, valid Java):
+`INR\s*(?<amount>[\d,.]+) debited from HDFC Bank XX(?<account>\d+) on (?<date>\S+)\. Info: NEFT Dr-.*-(?<merchant>[^-]+?)(?:\s+\w)?\.\s*Avl bal`.
 
 ## 5. Remove
 
@@ -124,18 +137,20 @@ it matters.
 
 ## 8. Tests
 
-- `RealMessageTest`: parse with `SmsParser` backed by the bundled `default_rules.json` (plus
-  the TMB rules where the test needs them); expectations as in the §4 table, `npsDebit`'s merchant
-  updated.
+- `RealMessageTest`: parse with `SmsParser` backed by a test rule set holding the seven generic
+  rules (a copy of the console's `data/generic-rules.json` under `src/test/resources`, test-only),
+  plus the TMB rules where the test needs them; expectations as in the §4 table, `npsDebit`'s
+  merchant updated.
 - `RemoteRulesRepositoryTest`: `"*"` matches any sender; a bank rule at 10 beats a `"*"` rule at 4;
-  no cached set → the asset's rules are used.
+  no cached set → nothing matches, and after a sync the queued message is cleared by the re-check.
 - `SmsRepositoryTest`: a message read twice (bank + app) is two transactions (the documented
   behaviour now); nothing references transfers.
 
 ## 9. Rollout
 
-1. Console: publish the seven generic rules from `default_rules.json` (replacing the four
-   `android_*` rules). Old app versions ignore `"*"` rules and keep using their templates.
+1. ~~Console: publish the seven generic rules~~ **Done: v16**, 2026-10-01, published from the
+   console repo's `data/generic-rules.json` with the four `android_*` rules removed. Old app
+   versions ignore `"*"` rules and keep using their templates.
 2. App: §2–§6, release.
 3. On the phone: Settings → Check now, then Import SMS history if you want old messages re-read
    under the new list.
@@ -145,7 +160,7 @@ it matters.
 - [ ] §2 `applyRule` fills `accountLabel` from `account`; `ParsedSms` loses `referenceId`,
       `counterpartyAccount`.
 - [ ] §3 `"*"` senders in `tryMatch` and `isIgnoredMessage`.
-- [ ] §4 bundled defaults used before the first sync.
+- [ ] §4 no bundled rules; Import SMS history syncs first; an empty cache matches nothing.
 - [ ] §5 removals; review heuristics moved.
 - [ ] §6 migration 7 → 8 + `MigrationTest`.
 - [ ] §8 tests.
