@@ -21,8 +21,15 @@ android {
         applicationId = "com.example.expensetracker"
         minSdk = 24
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        // Bump both on every release, in step with the git tag (`v1.1` → `versionName = "1.1"`,
+        // `versionCode = 2`). `versionName` is the only thing a submission reports to the rules
+        // console (`SubmissionRepository`), and it's how the console tells which redactor built a
+        // template — left at "1.0" forever, it has to keep compensating for templates from builds
+        // that no longer exist. `versionCode` is what the platform compares: raising it is what
+        // makes a later APK an update, and what lets it refuse an *older* APK over a newer
+        // database, which Room can only fail on.
+        versionCode = 2
+        versionName = "1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

@@ -6,11 +6,20 @@ the console shows rule authors, what it warns them about, and what it can no lon
 
 Ordered by how much it bites.
 
-## 1. `appVersion` can't date a template, and that's the app's fault
+## 1. `appVersion` can't date a template — fixed going forward, not backward
 
 Every submission carries `appVersion` (`SubmissionRepository.kt:53`), set from
-`BuildConfig.VERSION_NAME` (`di/AppContainer.kt:57`). That is `"1.0"` and has never been bumped
-(`app/build.gradle.kts:25`), so every submission ever sent looks the same age.
+`BuildConfig.VERSION_NAME` (`di/AppContainer.kt:57`). That was `"1.0"` from the first release and
+never bumped, so every submission sent so far looks the same age.
+
+**Now bumped** to `versionName = "1.1"` / `versionCode = 2`, and the comment in
+`app/build.gradle.kts` says to move both with every release and keep them in step with the git tag.
+From the next release on, `appVersion` is a real signal.
+
+It says nothing about submissions already in the console, and nothing about phones that haven't
+updated — a sideloaded app updates when its owner gets round to it. So the retirement signal is
+"no submissions reporting `1.0` for long enough to be sure", and until then the extra sample
+variations for old templates have to stay. That's the right call.
 
 This undercuts the compensation strategy in `FAITHFUL_REDACTION.md` §6 — vary the balance and the
 digit counts "for templates from older app versions" — because there is no signal for *which*
@@ -91,6 +100,8 @@ The existing route for over-admission is unchanged and is still the right one: a
 
 ## What the app side owes the console
 
-- [ ] Bump `versionName` per release so §1 stops being true.
-- [ ] Decide whether a submission says which queue it came from (§6), and if so, land the
-      `firestore.rules` change first.
+- [x] Bump `versionName` per release so §1 stops being true — done, `1.1` / `versionCode 2`, with
+      the standing instruction recorded at the bump itself.
+- [ ] Decide whether a submission says which queue it came from (§6). **Agreed with the console:
+      the app does not add that field without saying so first**, because `firestore.rules` has to
+      deploy before any phone sends it or those submissions are rejected.

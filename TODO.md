@@ -29,9 +29,12 @@ settle when it's built:
   files means Android's auto-backup already ships the database to Google's cloud by default. Decide
   deliberately whether that stays on, and exclude the database in `backup_rules.xml` /
   `data_extraction_rules.xml` if not.
-- Also unrelated to backup but found alongside it: `versionCode` is still `1` and has never been
-  bumped, so the platform can't block installing an older APK over a newer database — which throws
-  rather than wiping, but leaves the app unusable until the right APK is installed.
+- Also unrelated to backup but found alongside it: `versionCode` sat at `1` from the first release,
+  so the platform could not recognise an older APK as a downgrade and would install it over a newer
+  database — which throws rather than wiping, but leaves the app unusable until the right APK is
+  back. Fixed by bumping it (now `2`, with `versionName` in step); the protection only applies from
+  the next release onward, since the phone has to be running the higher code for the older one to
+  be refused.
 
 ## Search by message text — Transactions tab, Review tab, Messages I skipped
 
