@@ -65,6 +65,13 @@ Side note, not blocking: the balance rule also fires on the Axis helpline line
 `WhatsApp BAL to 917036165000` (→ `BAL to <BAL>`). It's still masked, just under the wrong
 name. With the invariant below it keeps passing; tightening it is optional.
 
+**Done since** (`BANK_RULES_FIRST.md` §4): it was not harmless after all — the published
+`axisbk_debit_v1` captured the helpline number as the balance, because that's what the template it
+was written on said it was. The rule now carries `(?!\s+to\b)` and the number falls through to
+`<PHONE>`. The same lookahead went into `BankTemplates.BALANCE_STATEMENT`, where reading the
+helpline as a balance handed every Axis message a bank-alert marker, so a promotion quoting an
+amount qualified for the review queue on structure alone.
+
 ## 4. Invariant test (catches this class of bug for good)
 
 For every message in the real-message corpus, the template must "fit back" over the original:
@@ -119,6 +126,8 @@ slice the text between matches.)
 - [x] §5 full-queue re-parse with keyset paging + test with more than 200 rows.
 - [x] REQUIREMENTS.md §6.1 (the invariant, `<D{n}>`, `<DATEW>`) and §8.1 (no cap).
 - [x] §8 `<NUM>` catch-all + narrowed `<PHONE>`, so no real message is unsubmittable.
+- [x] §3 side note closed: `bal` followed by `to` is no longer a balance, here and in
+      `BankTemplates` (`BANK_RULES_FIRST.md` §4).
 - [ ] Release; on the phone, Check now after the next rules version clears old TMB messages.
 
 ## 8. Two real messages that couldn't be submitted at all — fixed

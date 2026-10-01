@@ -25,15 +25,38 @@ object Redactor {
      */
     private val URL = Regex("""(?i)\b(?:https?://|www\.)\S+|(?i)\b(?:[a-z0-9-]+\.)+[a-z]{2,}/\S*""")
 
+    /**
+     * Codes someone could actually use: a voucher code, a coupon, an OTP, a PIN.
+     *
+     * `Code: 346QH2VK` has no run of five digits, so neither `<NUM>` nor [unredactedHints] saw it
+     * and the code uploaded verbatim. Only alphanumeric runs containing a digit are masked, so
+     * "Code: apply" and "Your PIN has been changed" keep their words.
+     */
+    private val CODE =
+        Regex("""(?i)\b(code|coupon|otp|pin|passcode)(\s*(?:is|:|-)?\s*)(?=[A-Za-z]*\d)([A-Za-z0-9]{4,12})\b""")
+
+    /**
+     * `(?!\s+to\b)`: Axis messages end "WhatsApp BAL to 917036165000", and without it the helpline
+     * number reads as the balance — which is how the published `axisbk_debit_v1` came to capture a
+     * phone number as one. Excluded here, the number falls through to the `<PHONE>` rule.
+     */
+    private val BALANCE = Regex(
+        """(?i)\b((?:avl|available|closing|updated)?\s*(?:bal|balance)\b(?!\s+to\b)[^\d]{0,12}?)""" +
+            """(rs\.?|inr)?(\s*)[\d,]+(?:\.\d{1,2})?""",
+    )
+
     private val RULES: List<Pair<Regex, (MatchResult) -> String>> = listOf(
         // First, so digits inside a link can't be half-masked into <DATE> or <REF> fragments.
         URL to { "<URL>" },
 
+        // Before <NUM> and before the ref rule: a six-digit OTP would otherwise become <NUM>,
+        // which hides it but tells the rule author it's an identifier rather than a secret.
+        CODE to { m -> m.groupValues[1] + m.groupValues[2] + "<CODE>" },
+
         // Balance: only the number goes. The currency token and its spacing are message shape that
         // rules anchor on — dropping them (as this used to) showed rule authors a `bal is <BAL>`
         // that no real message has, and every rule written against it matched nothing.
-        Regex("""(?i)\b((?:avl|available|closing|updated)?\s*(?:bal|balance)\b[^\d]{0,12}?)(rs\.?|inr)?(\s*)[\d,]+(?:\.\d{1,2})?""") to
-            { m -> m.groupValues[1] + m.groupValues[2] + m.groupValues[3] + "<BAL>" },
+        BALANCE to { m -> m.groupValues[1] + m.groupValues[2] + m.groupValues[3] + "<BAL>" },
 
         // Account / card numbers: keep the masking the bank already applied, drop the visible
         // digits — but say how many there were, since a rule has to match that many.
@@ -99,6 +122,13 @@ object Redactor {
             if (Regex("""\d{5,}""").containsMatchIn(plain)) add("a long number")
             if (Regex("""[\w.\-]+@[\w.\-]+""").containsMatchIn(plain)) add("an email or UPI handle")
             if (Regex("""(?i)https?://|www\.""").containsMatchIn(plain) || URL.containsMatchIn(plain)) add("a link")
+            // Deliberately looser than [CODE]'s 12-character ceiling: a longer code the rule left
+            // alone must still stop the upload rather than leave with it.
+            if (Regex("""(?i)\b(?:code|coupon|otp|pin)\b\s*(?:is|:|-)?\s*(?=[A-Za-z]*\d)[A-Za-z0-9]{4,}""")
+                    .containsMatchIn(plain)
+            ) {
+                add("a code")
+            }
         }
     }
 }

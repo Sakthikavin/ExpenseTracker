@@ -66,12 +66,26 @@ New tier order inside `SmsParser.parse`:
    sender+pattern pair saying this *kind* of message isn't a transaction (a declined-payment
    alert, say). Runs before any parsing tier below, so a built-in template or remote rule can't
    still book the non-payment it describes.
-3. `BankTemplates.findMatch` (unchanged)
-4. **`RemoteRulesRepository.tryMatch`** (new) — tries cached remote rules for this sender,
-   ordered by `priority` descending, same discipline as `BankTemplates.findMatch`
-   (try every matching rule before giving up, don't abort on the first sender match).
-5. `LearnedPatternDao` per-device patterns (unchanged)
-6. Review queue — admitted by `BankTemplates.looksFinancial`, which reads a message's *structure*
+3. **`RemoteRulesRepository.tryBankRules`** — cached remote rules for this sender with
+   `priority` ≥ `BANK_RULE_MIN_PRIORITY` (5), ordered by `priority` descending, same discipline as
+   `BankTemplates.findMatch` (try every matching rule before giving up, don't abort on the first
+   sender match). **Priorities 1–4 are reserved** for the console's generic `android_*` copies of
+   the built-in templates; bank-specific rules use 10 and up.
+
+   These run *before* the templates because a template answers first whatever a rule's priority,
+   and a generic shape can be read badly: on a Federal UPI debit the template takes the merchant as
+   `VPA landlord` from `landlord.ravi@ybl`, stopping at the dot in the handle, and
+   `looksLikeAccountOrNumber` accepts it. A rule reviewed against that sender's real messages is
+   the fix, and it can only be the fix if it runs first.
+4. `BankTemplates.findMatch` (unchanged)
+5. **`RemoteRulesRepository.tryFallbackRules`** — the remaining rules, `priority` < 5. The generic
+   copies run *after* the templates on purpose: the in-app templates read more from the same
+   message than any rule can carry (`resolveNonMerchant`, `COUNTERPARTY_ACCOUNT` — which
+   `TransferMatcher` needs — and the block formats), while a rule yields only amount, direction
+   and merchant. Running the copies first would swap a richer parse for a plainer one on every
+   bank. They still catch what no template reads.
+6. `LearnedPatternDao` per-device patterns (unchanged)
+7. Review queue — admitted by `BankTemplates.looksFinancial`, which reads a message's *structure*
    (a masked account, a reference, a balance, a UPI handle) as well as its verbs. A closed list of
    verbs couldn't keep up with how each bank abbreviates its own alerts: Canara writes `Dr.`/`Cr.`,
    an ATM writes `W/D`, and a message no verb matched was discarded without a row — so exactly the
@@ -103,7 +117,11 @@ selection has to follow this exact order:
    anywhere in the body → treat as noise. No `fieldMap` to satisfy, no `priority`; any match is
    enough and order among ignore rules doesn't matter.
 3. Otherwise, walk rules whose `senders` contain the normalized sender, by `priority` descending
-   (ties keep list order as published).
+   (ties keep list order as published). The app walks this list in two halves — `priority` ≥ 5
+   before `BankTemplates.findMatch`, `priority` < 5 after it — which doesn't change the order rules
+   are tried in, only which side of the templates each half sits on. The console's publish check
+   (`impact.js`) simulates remote rules alone in priority order, so it already predicts this for
+   everything except the templates' own extra reading.
 4. The first rule that matches the body **and** yields a non-empty value for every `fieldMap`
    group wins; a rule missing a mapped field falls through to the next candidate.
 5. Rules (and ignore rules) that fail to compile (§10) are skipped, never considered a match.
@@ -131,7 +149,8 @@ message it came from.
 |---|---|---|
 | Amounts | replaced with `<AMT>` | `Rs.500.00` → `Rs.<AMT>` |
 | Account/card numbers | keep the bank's own masking and the gap after it, replace the digits with `<D`*n*`>` for the *n* digits masked | `A/c XX1234` → `A/c XX<D4>`, `Card *5566` → `Card *<D4>`, `XX 12345` → `XX <D5>` |
-| Balances | only the number goes; the phrase, the currency token and its spacing stay | `Avl Bal Rs.15,342.50` → `Avl Bal Rs.<BAL>`, `Avl Bal:INR 1,234` → `Avl Bal:INR <BAL>` |
+| Balances | only the number goes; the phrase, the currency token and its spacing stay. `bal` followed by `to` is a helpline instruction, not a balance, and is excluded — otherwise the number after it is masked as a balance and a rule written on the template captures a phone number as one | `Avl Bal Rs.15,342.50` → `Avl Bal Rs.<BAL>`, `Avl Bal:INR 1,234` → `Avl Bal:INR <BAL>`, `WhatsApp BAL to 917036165000` → `WhatsApp BAL to <PHONE>` |
+| Claimable codes | replaced with `<CODE>`, keeping the label and its separator. Runs before `<NUM>` and before the ref rule: a voucher code like `346QH2VK` has no 5-digit run, so nothing else masked it and §6.1.1 didn't flag it either. Only alphanumeric runs containing a digit, so `Code: apply` and `Your PIN has been changed` keep their words | `Code: 346QH2VK` → `Code: <CODE>`, `OTP is 4821` → `OTP is <CODE>` |
 | Dates / times | replaced with `<DATE>` / `<TIME>`, or `<DATEW>` when the date contains whitespace (a rule's `\S+` date group can't read one) | `29-09-26` → `<DATE>`, `30 Sep 2026` → `<DATEW>` |
 | Reference / UTR numbers | replaced with `<REF>` | `Ref 123456789012` → `Ref <REF>` |
 | Phone numbers | replaced with `<PHONE>`, but only for shapes that really are one — an Indian mobile with optional country code, or a `1800` helpline. A looser rule called any 10–12 digit run a phone number, including mandate ids | `917036165000` → `<PHONE>`, `18002586161` → `<PHONE>` |
@@ -144,10 +163,13 @@ message it came from.
 ### 6.1.1 Redaction check
 
 Before upload, `Redactor` must flag (and the app must refuse to send) any template that still
-contains 5+ consecutive digits, an `x@y`-shaped handle, or a raw URL/bare-domain link (`http`,
-`www.`, or a `domain.tld/`-shaped run) outside the `<...>` placeholders above — same rule the
-console applies to inbound submissions. Add this as a unit test alongside the existing `Redactor`
-tests, covering a stray digit run, a stray handle, and a stray link.
+contains 5+ consecutive digits, an `x@y`-shaped handle, a raw URL/bare-domain link (`http`,
+`www.`, or a `domain.tld/`-shaped run), or a labelled code (`code`/`coupon`/`otp`/`pin` followed by
+an alphanumeric run containing a digit) outside the `<...>` placeholders above — same rule the
+console applies to inbound submissions. The code check is deliberately looser than the `<CODE>`
+rule's 12-character ceiling: a longer code the rule left alone must still stop the upload rather
+than leave with it. Add this as a unit test alongside the existing `Redactor` tests, covering a
+stray digit run, a stray handle, a stray link and a stray code.
 
 ### 6.2 Worked example
 

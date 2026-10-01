@@ -4,8 +4,13 @@ import com.example.expensetracker.data.local.dao.LearnedPatternDao
 import com.example.expensetracker.data.remoterules.RemoteRulesRepository
 
 /**
- * Runs the four-tier design end to end: built-in templates, then remote (console-curated) rules,
- * then per-device learned patterns, then review (REQUIREMENTS.md §5).
+ * Runs the four-tier design end to end (REQUIREMENTS.md §5): reviewed bank-specific remote rules,
+ * then built-in templates, then the generic remote fallbacks, then per-device learned patterns,
+ * then review.
+ *
+ * Every remote rule outranks a learned pattern either way: a rule has been reviewed against real
+ * samples and is shared by every phone, while a learned pattern is a same-device guess
+ * [PatternLearner] made from a single confirmation.
  */
 class SmsParser(
     private val learnedPatternDao: LearnedPatternDao,
@@ -25,11 +30,18 @@ class SmsParser(
         // running this later would book a payment that never happened.
         if (remoteRulesRepository?.isIgnoredMessage(sender, body) == true) return ParseOutcome.IgnoredAsNoise
 
+        // Bank-specific rules (priority ≥ 5) before the templates: a generic template reads a
+        // generic shape and sometimes reads it wrongly — on a Federal UPI debit it takes the
+        // merchant as "VPA landlord" from `landlord.ravi@ybl`, stopping at the dot in the handle.
+        // A rule reviewed against that sender's real messages is the fix, and it can only fix it
+        // by answering first.
+        remoteRulesRepository?.tryBankRules(sender, body)?.let { return ParseOutcome.Parsed(it) }
+
         BankTemplates.findMatch(sender, body)?.let { return ParseOutcome.Parsed(it) }
 
-        // Reviewed, shared rules take priority over a same-device guess PatternLearner made from
-        // one confirmation — see REQUIREMENTS.md §5 for the rationale.
-        remoteRulesRepository?.tryMatch(sender, body)?.let { return ParseOutcome.Parsed(it) }
+        // The generic fallbacks the console publishes as rules (priority 1–4) read less than the
+        // templates above do, so they only get what no template claimed.
+        remoteRulesRepository?.tryFallbackRules(sender, body)?.let { return ParseOutcome.Parsed(it) }
 
         // Try every pattern learned for this sender, not just the first — one sender can need a
         // separate pattern per message shape (a debit alert and a credit alert differ).

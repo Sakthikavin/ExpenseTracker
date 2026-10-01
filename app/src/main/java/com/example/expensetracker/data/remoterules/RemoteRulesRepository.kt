@@ -91,16 +91,34 @@ class RemoteRulesRepository(
     }
 
     /**
+     * Reviewed, bank-specific rules — run *before* `BankTemplates.findMatch` (§5), because a
+     * generic template can read a message badly and still answer first, which leaves the rule
+     * written to fix exactly that message no chance to run.
+     */
+    fun tryBankRules(sender: String, body: String): ParsedSms? =
+        tryMatch(sender, body) { it >= BANK_RULE_MIN_PRIORITY }
+
+    /**
+     * The console's generic `android_*` copies of the built-in templates, published at priority
+     * 1–4 — run *after* the templates, because the templates read more from the same message
+     * (self-transfer, counterparty institution, block formats) and a rule yields only amount,
+     * direction and merchant. They still catch what no template reads.
+     */
+    fun tryFallbackRules(sender: String, body: String): ParsedSms? =
+        tryMatch(sender, body) { it < BANK_RULE_MIN_PRIORITY }
+
+    /**
      * Tier 2 of `SmsParser.parse` (§5). Follows the console's exact prediction order (§5.2): rules
      * for this sender by `priority` descending (ties keep publish order), first rule that matches
      * *and* fills every `fieldMap` group wins, non-compiling rules are already excluded from
-     * [compiled].
+     * [compiled]. Splitting the walk by priority doesn't change that order — it only decides which
+     * side of the templates each half runs on.
      */
-    fun tryMatch(sender: String, body: String): ParsedSms? {
+    private fun tryMatch(sender: String, body: String, priority: (Int) -> Boolean): ParsedSms? {
         if (isDiscardedSender(sender)) return null
         val normalized = PatternLearner.normaliseSender(sender)
         return compiled
-            .filter { normalized in it.rule.senders }
+            .filter { normalized in it.rule.senders && priority(it.rule.priority) }
             .sortedByDescending { it.rule.priority }
             .firstNotNullOfOrNull { applyRule(it, body) }
     }
@@ -210,9 +228,17 @@ class RemoteRulesRepository(
 
     private fun JSONArray.toStringList(): List<String> = (0 until length()).map { getString(it) }
 
-    private companion object {
-        const val PREF_CACHED_RULE_SET = "remote_rules_cached_set"
-        const val PREF_LAST_CHECKED_AT = "remote_rules_last_checked_at"
-        const val ONE_DAY_MILLIS = 24L * 60 * 60 * 1000
+    companion object {
+        /**
+         * The line between a reviewed, bank-specific rule and a generic fallback. Priorities 1–4
+         * are reserved for the console's `android_*` copies of the built-in templates — a console
+         * convention, recorded in both repositories' REQUIREMENTS.md §5. A bank rule published
+         * below this by mistake loses to the templates, which is the pre-existing behaviour.
+         */
+        const val BANK_RULE_MIN_PRIORITY = 5
+
+        private const val PREF_CACHED_RULE_SET = "remote_rules_cached_set"
+        private const val PREF_LAST_CHECKED_AT = "remote_rules_last_checked_at"
+        private const val ONE_DAY_MILLIS = 24L * 60 * 60 * 1000
     }
 }

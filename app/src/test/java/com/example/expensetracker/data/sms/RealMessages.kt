@@ -69,11 +69,21 @@ object RealMessages {
     val canaraDebit = "Dear Customer, Acct XXX167 Dr. INR 26.00 on 29/09/26 to Euronet Serv; " +
         "UPI: 627263395849; Bal INR 49,511.88.Not you?SMS BLOCKUPI to 9901771222-CanaraBank"
 
+    /**
+     * A voucher offer carrying a claimable code — the shape recorded in `BANK_RULES_FIRST.md` §3
+     * rather than a capture from the phone, so unlike its neighbours this one is a reconstruction.
+     * `346QH2VK` has no run of five digits, so before the `<CODE>` rule nothing masked it and
+     * nothing flagged it either: the code would have uploaded verbatim.
+     */
+    val voucherCode = "Congrats! Rs.1,250.00 voucher for you. Code: 346QH2VK. " +
+        "Claim: https://1.hdfc.bank.in/HDFCBK/s/a/E0WMgeP0 T&C apply"
+
     /** HDFC: a declined transaction, carrying a per-customer short link. */
     val hdfcDeclined = "TXN DECLINED: Rs.500 on 29-09-26 at 19:00 on HDFC Bank Debit Card xx1234. " +
         "Reason: Online set Limit Exceeded. Modify:https://1.hdfc.bank.in/HDFCBK/s/a/E0WMgeP0"
 
     val all = listOf(
-        axisApy, hdfcUpi, npsDebit, npsCredit, tmbCredit, tmbDebit, federalUpi, canaraDebit, hdfcDeclined,
+        axisApy, hdfcUpi, npsDebit, npsCredit, tmbCredit, tmbDebit, federalUpi, canaraDebit,
+        voucherCode, hdfcDeclined,
     )
 }

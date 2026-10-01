@@ -56,6 +56,33 @@ class RedactorTest {
         assertTrue(template, !template.contains("<URL>"))
     }
 
+    /**
+     * A voucher code is claimable, and an OTP or a PIN is worse. Neither carries a five-digit run,
+     * so `<NUM>` and the pre-upload check both used to let them through.
+     */
+    @Test
+    fun `masks a claimable code`() {
+        assertEquals("Code: <CODE>", Redactor.redact("Code: 346QH2VK"))
+        assertEquals("OTP is <CODE>", Redactor.redact("OTP is 4821"))
+        assertEquals("Your PIN has been changed", Redactor.redact("Your PIN has been changed"))
+    }
+
+    @Test
+    fun `flags a code left behind`() {
+        assertEquals(listOf("a code"), Redactor.unredactedHints("Rs.<AMT> voucher. Code: 346QH2VK"))
+        assertEquals(emptyList<String>(), Redactor.unredactedHints("Rs.<AMT> voucher. Code: <CODE>"))
+    }
+
+    /**
+     * "WhatsApp BAL to 917036165000" is a helpline, not a balance. The published `axisbk_debit_v1`
+     * captured that number as the balance because the template told it to.
+     */
+    @Test
+    fun `a BAL to helpline is a phone number, not a balance`() {
+        assertEquals("WhatsApp BAL to <PHONE>", Redactor.redact("WhatsApp BAL to 917036165000"))
+        assertEquals("Avl Bal Rs.<BAL>", Redactor.redact("Avl Bal Rs.1,234.00"))
+    }
+
     @Test
     fun `flags a raw link left behind`() {
         assertEquals(listOf("a link"), Redactor.unredactedHints("Blocked. Modify:https://1.hdfc.bank.in/s/a/E0WMgeP0"))

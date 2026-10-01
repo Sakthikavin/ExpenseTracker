@@ -321,9 +321,15 @@ internal fun parseVerbs(): List<String> =
  * A balance and the amount that moved, together — "Dr. INR 26.00 … Bal INR 49,511.88". Matched so
  * the balance can be taken out of the message before asking whether any amount is left: a balance
  * enquiry's *only* amount is its balance, and that's what separates it from a real alert.
+ *
+ * `(?!\s+to\b)` for the same reason `Redactor`'s balance rule has it: Axis messages end "WhatsApp
+ * BAL to 917036165000", and reading that as a balance gave every such message a balance marker —
+ * so a promotion quoting an amount ("personal loan of Rs 5,00,000 … WhatsApp BAL to …") looked
+ * structurally like a bank alert and reached the review queue.
  */
 private val BALANCE_STATEMENT = Regex(
-    """(?i)\b(?:avl|available|closing|updated)?\s*(?:bal|balance)\b[^\d]{0,12}?(?:rs\.?|inr)?\s*[\d,]+(?:\.\d{1,2})?""",
+    """(?i)\b(?:avl|available|closing|updated)?\s*(?:bal|balance)\b(?!\s+to\b)""" +
+        """[^\d]{0,12}?(?:rs\.?|inr)?\s*[\d,]+(?:\.\d{1,2})?""",
 )
 
 /**

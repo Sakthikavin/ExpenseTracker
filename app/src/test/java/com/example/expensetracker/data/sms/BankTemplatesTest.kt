@@ -147,6 +147,19 @@ class BankTemplatesTest {
         }
     }
 
+    /**
+     * "WhatsApp BAL to 917036165000" is the helpline Axis puts at the end of its messages, not a
+     * balance. Read as one it gave every such message a bank-alert marker, so a promotion quoting
+     * an amount qualified on structure alone and reached the review queue.
+     */
+    @Test
+    fun `a promotion is not a bank alert just because it offers a BAL helpline`() {
+        val promo = "Pre-approved personal loan of Rs 5,00,000 awaits you! " +
+            "WhatsApp BAL to 917036165000 Query? Call 18604195555"
+        assertNull(parse(promo))
+        assertFalse(looksFinancial(promo))
+    }
+
     @Test
     fun `ignores a balance enquiry`() {
         val body = "Dear customer, your a/c balance is Rs 15,000.00 as on 02-08-26"
