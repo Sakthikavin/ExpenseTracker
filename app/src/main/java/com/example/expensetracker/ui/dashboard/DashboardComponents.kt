@@ -24,13 +24,17 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.expensetracker.ui.common.CategoryBadge
+import com.example.expensetracker.ui.common.formatDateRange
 import com.example.expensetracker.ui.common.formatMinorUnitsAsInr
 
 /** Card look shared by every dashboard block: off-white surface, thin border, rounded corners. */
@@ -98,9 +103,19 @@ private val PRESET_OPTIONS = listOf(
     PresetOption(DatePreset.THIS_YEAR, "This year"),
 )
 
+/**
+ * [currentRangeLabel] is the range the dashboard is showing right now — the thing "Set as default"
+ * would pin — which is not always one of the presets above it, since stepping with the chevrons
+ * produces a custom range.
+ */
 @Composable
 fun DatePresetSheet(
     selected: DatePreset,
+    currentRangeLabel: String,
+    isCurrentRangeDefault: Boolean,
+    hasDefault: Boolean,
+    onSetAsDefault: () -> Unit,
+    onClearDefault: () -> Unit,
     onSelect: (DatePreset) -> Unit,
     onCustomRangeRequested: () -> Unit,
     onDismiss: () -> Unit,
@@ -153,9 +168,118 @@ fun DatePresetSheet(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            DefaultRangeRow(
+                currentRangeLabel = currentRangeLabel,
+                isCurrentRangeDefault = isCurrentRangeDefault,
+                hasDefault = hasDefault,
+                onSetAsDefault = onSetAsDefault,
+                onClearDefault = onClearDefault,
+            )
         }
     }
 }
+
+/**
+ * The pin control at the foot of the preset sheet. Three states, because "nothing pinned",
+ * "this range is pinned" and "something else is pinned" each need a different next action.
+ */
+@Composable
+private fun DefaultRangeRow(
+    currentRangeLabel: String,
+    isCurrentRangeDefault: Boolean,
+    hasDefault: Boolean,
+    onSetAsDefault: () -> Unit,
+    onClearDefault: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (isCurrentRangeDefault) Modifier else Modifier.clickable(onClick = onSetAsDefault))
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            if (isCurrentRangeDefault) Icons.Filled.Star else Icons.Filled.StarBorder,
+            contentDescription = null,
+            tint = if (isCurrentRangeDefault) MaterialTheme.colorScheme.primary else DashboardPalette.TextMuted,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                if (isCurrentRangeDefault) "Default range" else "Set as default",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = DashboardPalette.TextPrimary,
+            )
+            Text(
+                when {
+                    isCurrentRangeDefault -> "$currentRangeLabel — opens here every time"
+                    hasDefault -> "Replace the current default with $currentRangeLabel"
+                    else -> "Open on $currentRangeLabel every time"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = DashboardPalette.TextSecondary,
+            )
+        }
+        if (isCurrentRangeDefault) {
+            TextButton(onClick = onClearDefault) { Text("Clear") }
+        }
+    }
+}
+
+/**
+ * Explains an empty-looking dashboard when a pinned custom range has fallen into the past. Not a
+ * blocking dialog: the range may still be exactly what the user wants to look at, so this informs
+ * and offers an exit rather than forcing one.
+ */
+@Composable
+fun StaleDefaultBanner(
+    warning: StaleDefaultWarning,
+    onSwitchToThisMonth: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(DashboardPalette.WarningPillBg, RoundedCornerShape(12.dp))
+            .border(1.dp, DashboardPalette.Border, RoundedCornerShape(12.dp))
+            .padding(12.dp),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            Icons.Filled.WarningAmber,
+            contentDescription = null,
+            tint = DashboardPalette.WarningPillText,
+            modifier = Modifier.size(20.dp),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "Your default range has passed",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = DashboardPalette.WarningPillText,
+            )
+            Text(
+                "${formatDateRange(warning.start, warning.end)} ended " +
+                    "${warning.daysAgo} ${"day".plural(warning.daysAgo)} ago, so this period won't " +
+                    "include anything recent.",
+                style = MaterialTheme.typography.bodySmall,
+                color = DashboardPalette.WarningPillText,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onSwitchToThisMonth) { Text("Show this month") }
+                TextButton(onClick = onDismiss) { Text("Keep it") }
+            }
+        }
+    }
+}
+
+private fun String.plural(count: Int) = if (count == 1) this else this + "s"
 
 // ---------- 2: savings hero + stat tiles ----------
 

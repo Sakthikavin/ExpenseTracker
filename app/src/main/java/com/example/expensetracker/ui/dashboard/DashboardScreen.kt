@@ -10,16 +10,18 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.FloatingActionButton
@@ -29,7 +31,9 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -44,6 +48,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.expensetracker.data.local.entity.Direction
 import com.example.expensetracker.ui.common.AddTransactionDialog
 import com.example.expensetracker.ui.common.CategoryBadge
@@ -74,6 +80,7 @@ fun DashboardScreen(
             container.budgetRepository,
             container.smsRepository,
             container.merchantCategoryRuleRepository,
+            DateRangePreferences(container.settingsPrefs),
         )
     }
     val state by viewModel.uiState.collectAsState()
@@ -105,6 +112,16 @@ fun DashboardScreen(
                     onNext = { viewModel.stepPeriod(forward = true) },
                     onLabelClick = { showPresetSheet = true },
                 )
+            }
+
+            state.staleDefault?.let { warning ->
+                item {
+                    StaleDefaultBanner(
+                        warning = warning,
+                        onSwitchToThisMonth = { viewModel.selectPreset(DatePreset.THIS_MONTH) },
+                        onDismiss = { viewModel.dismissStaleDefaultWarning() },
+                    )
+                }
             }
 
             item {
@@ -216,6 +233,17 @@ fun DashboardScreen(
     if (showPresetSheet) {
         DatePresetSheet(
             selected = state.datePreset,
+            currentRangeLabel = periodLabel(state.datePreset, state.rangeStart, state.rangeEnd),
+            isCurrentRangeDefault = state.isDefaultRange,
+            hasDefault = state.hasDefaultRange,
+            onSetAsDefault = {
+                viewModel.setCurrentRangeAsDefault()
+                showPresetSheet = false
+            },
+            onClearDefault = {
+                viewModel.clearDefaultRange()
+                showPresetSheet = false
+            },
             onSelect = { preset ->
                 viewModel.selectPreset(preset)
                 showPresetSheet = false
@@ -309,26 +337,44 @@ private fun DateRangePickerDialog(
         initialSelectedEndDateMillis = initialEnd.atStartOfDayEpochMillis(),
     )
 
-    AlertDialog(
+    // Deliberately not an AlertDialog: that caps its content at the basic-dialog max width
+    // (~312dp) and then pads inside that, which leaves a DateRangePicker — a component built for
+    // ~360dp and up — too narrow to lay out. It degrades silently rather than overflowing: the
+    // header date wraps to one character per line and the day grid collapses to nothing. M3
+    // specifies the range picker as a full-screen dialog, so that's what this is.
+    Dialog(
         onDismissRequest = onDismiss,
-        text = {
-            DateRangePicker(state = pickerState, modifier = Modifier.height(480.dp))
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val startMillis = pickerState.selectedStartDateMillis
-                    val endMillis = pickerState.selectedEndDateMillis ?: startMillis
-                    if (startMillis != null && endMillis != null) {
-                        val start = Instant.fromEpochMilliseconds(startMillis).toLocalDateTime(utc).date
-                        val end = Instant.fromEpochMilliseconds(endMillis).toLocalDateTime(utc).date
-                        onConfirm(start, end)
-                    }
-                },
-            ) { Text("Apply") }
-        },
-        dismissButton = { Button(onClick = onDismiss) { Text("Cancel") } },
-    )
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                DateRangePicker(state = pickerState, modifier = Modifier.weight(1f))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        // A range picker can legitimately end with only a start date selected —
+                        // treat that as a single-day range rather than disabling Apply.
+                        enabled = pickerState.selectedStartDateMillis != null,
+                        onClick = {
+                            val startMillis = pickerState.selectedStartDateMillis
+                            val endMillis = pickerState.selectedEndDateMillis ?: startMillis
+                            if (startMillis != null && endMillis != null) {
+                                val start = Instant.fromEpochMilliseconds(startMillis).toLocalDateTime(utc).date
+                                val end = Instant.fromEpochMilliseconds(endMillis).toLocalDateTime(utc).date
+                                onConfirm(start, end)
+                            }
+                        },
+                    ) { Text("Apply") }
+                }
+            }
+        }
+    }
 }
 
 private fun LocalDate.atStartOfDayEpochMillis(): Long =

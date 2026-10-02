@@ -1,6 +1,7 @@
 package com.example.expensetracker.di
 
 import android.content.Context
+import android.content.SharedPreferences
 import com.example.expensetracker.BuildConfig
 import com.example.expensetracker.data.local.AppDatabase
 import com.example.expensetracker.data.remoterules.RemoteRulesApi
@@ -23,7 +24,12 @@ import com.example.expensetracker.data.sms.SmsParser
  */
 class AppContainer(context: Context) {
     private val database: AppDatabase = AppDatabase.getInstance(context)
-    private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    /**
+     * The one "settings" preferences file the app uses. Exposed so screens that need a typed view
+     * over it (the dashboard's pinned date range) can build one without reaching for a Context.
+     */
+    val settingsPrefs: SharedPreferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    private val prefs = settingsPrefs
 
     val categoryRepository = CategoryRepository(database.categoryDao())
     val transactionRepository = TransactionRepository(database.transactionDao())
