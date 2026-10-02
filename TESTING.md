@@ -99,8 +99,10 @@ appear in the Transactions tab within a second or two.
 > covered on-device by `SmsRepositoryTest.ingestsMultiLineBlockFormatAlerts` (see §8), which feeds
 > the real text through the real ingest path.
 
-To watch the duplicate-detection rules work, send an NPS-style pair — one debit alert and its NEFT
-confirmation, sharing a reference. Only **one** ₹5,000 debit should appear:
+An NPS-style pair — one debit alert and its NEFT confirmation, sharing a reference — now produces
+**two** transactions, a ₹5,000 debit and a ₹5,000 credit. That's the documented behaviour since
+parsing moved to the published rule list; collapsing it is a console action (a discarded sender or an
+ignore rule). Sending the *same* message twice should still produce one:
 
 ```bash
 adb emu sms send HDFCBK "UPDATE: INR 5,000.00 debited from HDFC Bank XX3941 on 05-MAR-26. Info: NEFT Dr-UTIB0CCH274-A B C-HDFCH00842011992-NET BANKING SI -NPS Contribution M. Avl bal:INR 84,966.79"
@@ -123,16 +125,15 @@ adb emu sms send HDFCBK "HDFC Bank : NEFT money transfer Txn No HDFCH00842011992
   and (re)categorize it — the change saves immediately. The category's icon shows both on
   the row and in the dropdown list.
 
-**My accounts** (bank icon, top right)
-- Every account label seen in a message is listed automatically — no typing account numbers.
-- Toggle the ones that are yours and give them names. From then on, money moving between two of
-  them is recorded as a transfer rather than as spending plus income.
+**Transfers — gone on purpose**
+- There is no "My accounts" screen and no transfer pairing any more. Money moved between your own
+  accounts is an ordinary debit and an ordinary credit, and both count. Check the upgrade too:
+  anything paired before this release is now two separate rows, so those months report more
+  spending and more income than they used to.
 
-**Transfers**
-- A matched transfer shows as one row: `⇄ Transfer · XX3941 → XX4795`, marked "Not counted as
-  spending", with the Dashboard stating the amount separately beneath the totals.
-- The ⋮ menu on any transaction has **Mark as transfer** (pick the other leg, or "No matching
-  message" if only one bank sent one); on a paired row it has **Not a transfer** to undo.
+**Messages I skipped** (Settings)
+- Lists what the parser turned away while still mentioning money — a promotion with a price in it, a
+  balance enquiry. Each row has **Move to review** for when the heuristic was wrong.
 
 **Budgets tab and Review tab**
 - Category icons now show next to category names here too (budget rows, and the category
@@ -157,9 +158,11 @@ The SMS pipeline is covered by two suites. Run both before shipping a parser cha
 ./gradlew :app:testDebugUnitTest
 ```
 
-Covers tier-1 parsing per message format, date extraction, amount conversion, and pattern
-generalisation. When a new bank format shows up, add it to the corpus in `BankTemplatesTest`
-*first*, watch it fail, then change the regex.
+Covers parsing per message format against the **real published rules** (copied into
+`src/test/resources`), date extraction, amount conversion, redaction faithfulness and pattern
+generalisation. When a new bank format shows up, add the message to `RealMessages` *first* and watch
+`RealMessageTest` fail — then write the rule on the console and refresh the copy, rather than
+changing a regex here.
 
 **Instrumentation tests** — need the emulator from step 1 running:
 
@@ -167,8 +170,9 @@ generalisation. When a new bank format shows up, add it to the corpus in `BankTe
 ./gradlew :app:connectedDebugAndroidTest
 ```
 
-Covers the database v1 → v2 migration against a real old database, and the ingest path end to end
-(deduplication, raw↔transaction linking, dates, and the confirm-then-auto-parse learning loop).
+Covers every database migration against a real old database, and the ingest path end to end
+(deduplication, raw↔transaction linking, dates, the skipped-message bucket, and the
+confirm-then-auto-parse learning loop).
 
 To run a single class:
 

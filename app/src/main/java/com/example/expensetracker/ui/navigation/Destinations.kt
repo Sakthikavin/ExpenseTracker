@@ -2,7 +2,6 @@ package com.example.expensetracker.ui.navigation
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Inbox
@@ -58,7 +57,6 @@ sealed class Destination(val route: String, val label: String, val icon: ImageVe
     data object Bills : Destination("bills", "Bills", Icons.Filled.Receipt)
     data object Categories : Destination("categories", "Categories", Icons.Filled.Category)
     data object MerchantRules : Destination("merchant_rules", "Merchant rules", Icons.AutoMirrored.Filled.List)
-    data object Accounts : Destination("accounts", "My accounts", Icons.Filled.AccountBalance)
     data object Settings : Destination("settings", "Settings", Icons.Filled.Settings)
 
     companion object {

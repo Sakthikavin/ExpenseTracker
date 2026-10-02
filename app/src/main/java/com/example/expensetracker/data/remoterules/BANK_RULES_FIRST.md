@@ -4,8 +4,14 @@ Android-side spec. Companion to `REQUIREMENTS.md` (§5, §5.2, §6.1) and `FAITH
 in this folder. Fold the changes into REQUIREMENTS.md when you implement, so the two repos' specs
 stay identical.
 
-**Implemented** on the app side (see §6 for what's left, all console-side or on-device checks).
-REQUIREMENTS.md §5/§5.2/§6.1 and `FAITHFUL_REDACTION.md` §3/§7 now carry the same changes.
+**Implemented, and §1–§2 then superseded.** The priority-5 split shipped in code and was replaced
+before release by `PARSING_ARCHITECTURE.md`, which removes the built-in templates entirely — with no
+templates there is nothing for a rule to be ordered against, so `tryBankRules`/`tryFallbackRules`
+and `BANK_RULE_MIN_PRIORITY` are gone and `tryMatch` walks one list again. The Federal merchant bug
+in §1 is fixed instead by the published generic rules' better merchant ending (that file's §4).
+
+**§3 (`<CODE>`) and §4 (`BAL to` → `<PHONE>`) stand** and are released. REQUIREMENTS.md §6.1/§6.1.1
+and `FAITHFUL_REDACTION.md` §3/§7 carry them.
 
 ## 1. Why: a bank rule can't fix a message the generic template reads badly
 
@@ -24,7 +30,7 @@ reads `landlord.ravi@ybl`, but it never runs, because the template answered firs
 The console publishes the four generic templates as remote rules too (`android_*_v1`). Since v14
 they sit at **priority 4–1**; bank-specific rules use 10 and up.
 
-## 2. The new order
+## 2. The new order (superseded — see `PARSING_ARCHITECTURE.md` §2)
 
 ```
 ALWAYS_IGNORE → discardSenders → ignoreRules
@@ -110,18 +116,19 @@ rule's date to win over `SmsDateParser`, or the balance stored, that's a separat
 
 ## 6. Checklist
 
-- [x] §2 order: bank rules (≥ 5) → templates → fallback rules (< 5), with the four tests
-      (`RulePriorityOrderTest`). Implemented as `tryBankRules` / `tryFallbackRules` over a private
-      `tryMatch(sender, body, priority)`, with `BANK_RULE_MIN_PRIORITY = 5`.
+- [x] ~~§2 order: bank rules (≥ 5) → templates → fallback rules (< 5)~~ — implemented, then undone
+      with the templates themselves. `RulePriorityOrderTest` is replaced by
+      `RemoteRulesRepositoryTest`, which holds the part that still matters: priority decides, and a
+      bank rule outranks an any-sender one.
 - [x] §3 `<CODE>` rule + `unredactedHints` + corpus message (`RealMessages.voucherCode`, which is
       a reconstruction of the shape recorded here, not a capture from the phone — replace it if the
       original turns up). Note the exposure is narrower than §3 implies: uploads only happen from
       the review queue, and this message is `Discarded`, so it can only be uploaded after a manual
       **Move to review** from the skipped list.
-- [x] §4 balance rule ignores `BAL to`; Axis helpline → `<PHONE>`. Also applied to
-      `BankTemplates.BALANCE_STATEMENT`, which §4 didn't mention: reading the helpline as a balance
-      gave every Axis message a bank-alert marker, so a promotion quoting an amount reached the
-      review queue on structure alone (`BankTemplatesTest`).
+- [x] §4 balance rule ignores `BAL to`; Axis helpline → `<PHONE>`. Also applied to the review
+      heuristic's own balance regex, which §4 didn't mention: reading the helpline as a balance gave
+      every Axis message a bank-alert marker, so a promotion quoting an amount reached the review
+      queue on structure alone (now `ReviewHeuristicsTest`).
 - [x] REQUIREMENTS.md §5 (order, priority 1–4 reserved), §5.2, §6.1 (`<CODE>`, `BAL to`), §6.1.1
       (the code check), and `FAITHFUL_REDACTION.md` §3's side note closed.
 - [ ] Release, then Settings → Check now: FEDBNK UPI debits in review pick up the bank rule.

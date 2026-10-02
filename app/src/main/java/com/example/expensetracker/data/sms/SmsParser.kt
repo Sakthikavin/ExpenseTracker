@@ -4,13 +4,14 @@ import com.example.expensetracker.data.local.dao.LearnedPatternDao
 import com.example.expensetracker.data.remoterules.RemoteRulesRepository
 
 /**
- * Runs the four-tier design end to end (REQUIREMENTS.md §5): reviewed bank-specific remote rules,
- * then built-in templates, then the generic remote fallbacks, then per-device learned patterns,
- * then review.
+ * One ordered rule list, then the review queue (`PARSING_ARCHITECTURE.md` §2).
  *
- * Every remote rule outranks a learned pattern either way: a rule has been reviewed against real
- * samples and is shared by every phone, while a learned pattern is a same-device guess
- * [PatternLearner] made from a single confirmation.
+ * The app ships no rules and reads no message itself: everything that turns an SMS into a
+ * transaction is published from the console and arrives by sync, so a bank whose wording changes is
+ * a rule edit rather than an app release. What's left on the device is the order below, the
+ * review-queue heuristics in `ReviewHeuristics.kt`, and the learned patterns — which come after the
+ * rules, since a rule was reviewed against real samples while a learned pattern is a same-device
+ * guess [PatternLearner] made from one confirmation.
  */
 class SmsParser(
     private val learnedPatternDao: LearnedPatternDao,
@@ -25,23 +26,13 @@ class SmsParser(
         // discardSenders from the published rule set (§5): a noisy sender one person reports
         // silences it for everyone on the next sync, not just the sender's ALWAYS_IGNORE list above.
         if (remoteRulesRepository?.isDiscardedSender(sender) == true) return ParseOutcome.IgnoredAsNoise
-        // Published ignore rules (IGNORE_RULES.md §3) must come *before* the parsing tiers below:
-        // "TXN DECLINED: Rs.500 ... HDFC Bank Debit Card" reads like a real spend to a template, so
-        // running this later would book a payment that never happened.
+        // Published ignore rules (IGNORE_RULES.md §3) must come *before* the rules below:
+        // "TXN DECLINED: Rs.500 ... HDFC Bank Debit Card" reads like a real spend, so running this
+        // later would book a payment that never happened.
         if (remoteRulesRepository?.isIgnoredMessage(sender, body) == true) return ParseOutcome.IgnoredAsNoise
 
-        // Bank-specific rules (priority ≥ 5) before the templates: a generic template reads a
-        // generic shape and sometimes reads it wrongly — on a Federal UPI debit it takes the
-        // merchant as "VPA landlord" from `landlord.ravi@ybl`, stopping at the dot in the handle.
-        // A rule reviewed against that sender's real messages is the fix, and it can only fix it
-        // by answering first.
-        remoteRulesRepository?.tryBankRules(sender, body)?.let { return ParseOutcome.Parsed(it) }
-
-        BankTemplates.findMatch(sender, body)?.let { return ParseOutcome.Parsed(it) }
-
-        // The generic fallbacks the console publishes as rules (priority 1–4) read less than the
-        // templates above do, so they only get what no template claimed.
-        remoteRulesRepository?.tryFallbackRules(sender, body)?.let { return ParseOutcome.Parsed(it) }
+        // The published rule list, highest priority first. Nothing matches before the first sync.
+        remoteRulesRepository?.tryMatch(sender, body)?.let { return ParseOutcome.Parsed(it) }
 
         // Try every pattern learned for this sender, not just the first — one sender can need a
         // separate pattern per message shape (a debit alert and a credit alert differ).
@@ -51,13 +42,13 @@ class SmsParser(
 
         if (looksLikePreNotice(body)) return ParseOutcome.IgnoredAsNoise
         // Turned away by the heuristic — but if it mentioned money, keep the row so the mistake is
-        // findable. A wording no tier recognised used to leave nothing behind at all, which is how
+        // findable. A wording nothing recognised used to leave no trace at all, which is how
         // Canara's `Dr.` alerts went missing for months.
         if (!looksFinancial(body)) {
             return if (mentionsAmount(body)) ParseOutcome.Discarded else ParseOutcome.Ignored
         }
 
-        // A template/learned pattern can confidently read an unusual-but-real small amount (a ₹1
+        // A rule or learned pattern can confidently read an unusual-but-real small amount (a ₹1
         // UPI payment is still a real payment); this only guards the loose, unconfirmed heuristic
         // that would otherwise surface a bare verification ping for review.
         val looseAmount = looseAmountMinor(body)

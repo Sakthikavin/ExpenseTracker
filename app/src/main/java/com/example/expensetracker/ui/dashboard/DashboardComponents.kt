@@ -242,32 +242,6 @@ fun StatTile(label: String, amountMinor: Long, dotColor: Color, modifier: Modifi
     }
 }
 
-// ---------- 4: transfer chip ----------
-
-@Composable
-fun TransferChip(amountMinor: Long) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(DashboardPalette.Gridline, RoundedCornerShape(10.dp))
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Icon(
-            Icons.Filled.SwapHoriz,
-            contentDescription = null,
-            tint = DashboardPalette.TextMuted,
-            modifier = Modifier.size(16.dp),
-        )
-        Text(
-            "${formatMinorUnitsAsInr(amountMinor)} moved between your own accounts — not counted as income or expense",
-            style = MaterialTheme.typography.bodySmall,
-            color = DashboardPalette.TextSecondary,
-        )
-    }
-}
-
 // ---------- 3: review banner ----------
 
 @Composable

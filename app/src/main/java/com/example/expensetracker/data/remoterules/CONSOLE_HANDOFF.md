@@ -1,8 +1,9 @@
 # Notes for the console repo
 
-What changed on the device that the console can't see from the rules schema, written after
-implementing `BANK_RULES_FIRST.md`. Nothing here changes the published JSON — it's all about what
-the console shows rule authors, what it warns them about, and what it can no longer infer.
+What changed on the device that the console can't see from the rules schema, written while
+implementing `BANK_RULES_FIRST.md` and then `PARSING_ARCHITECTURE.md`. Nothing here changes the
+published JSON — it's all about what the console shows rule authors, what it warns them about, and
+what it can and can no longer infer.
 
 Ordered by how much it bites.
 
@@ -30,19 +31,22 @@ which rule set the phone had, not which redactor built the template.
 For everything already submitted, template shape is the only evidence of age — `bal is <BAL>`
 without a currency token means an old build, and so does a code sitting unmasked in a template.
 
-## 2. Priority 5 is now load-bearing, not just a sort key
+## 2. Priority is now the *only* ordering — and the app has no templates left
 
-`SmsParser.parse` splits the remote-rule walk around the built-in templates
-(`REQUIREMENTS.md` §5 steps 3–5): `priority >= 5` runs before them, `priority < 5` after.
-`BANK_RULE_MIN_PRIORITY = 5` in `RemoteRulesRepository`.
+Superseded in the app before release, in the direction the console had already taken: there is no
+priority-5 split and no `BankTemplates`. `SmsParser` walks one list, by priority, and nothing of the
+app's own reads a message in between. Two consequences for the console:
 
-So a bank-specific rule published at 1–4 silently loses to the template for every message the
-template reads at all. It will look like it does nothing, with no error anywhere — the exact
-failure the change was meant to end.
+- **Nothing on the device backs up a missing rule.** A sender no rule reads produces no transaction
+  at all — the message waits in the review queue instead. That makes the generic `"*"` rules
+  load-bearing in a way they weren't when they merely duplicated the templates: publishing a set
+  without them would stop every phone parsing anything generic. The publish check should refuse, or
+  at least warn hard, on a set with no `"*"` rule.
+- **Priority ordering is exactly what the device does**, so `impact.js` is now a faithful simulation
+  rather than an approximation (see §5).
 
-Worth a publish-time warning: a rule that isn't an `android_*` generic copy and sits below priority
-5 is almost certainly a mistake. And the `android_*` copies need to **stay** at 1–4; promoting one
-to 5 would put a plainer parse ahead of the richer in-app template on every bank.
+Still worth a warning on a bank-specific rule published below the generic band (1–6): it will be
+tried after rules that are meant to be fallbacks, which is almost certainly a mistake.
 
 ## 3. No existing rule broke — rules match the raw SMS, not the template
 
@@ -73,15 +77,14 @@ generation.
 digit. Deliberately looser than the masking rule's 12-character ceiling — a longer code the rule
 leaves alone must still be refused rather than accepted.
 
-## 5. `impact.js` is now optimistic for rules below priority 5
+## 5. `impact.js` now predicts the device exactly
 
-It simulates remote rules alone, in priority order, which still matches the device for each half of
-the walk. What it can't see is `BankTemplates` sitting between priority 5 and 4. Any group it
-predicts a fallback-priority rule will gain is an over-estimate, because on the device the
-templates answer first for anything they can read.
+It simulates remote rules alone, in priority order — which, with the templates gone and the walk
+back to one list, is precisely what `RemoteRulesRepository.tryMatch` does. The caveat this section
+used to carry is void: there is nothing left on the device that reads a message between two rules.
 
-Either model the templates or show the caveat on that side of the threshold. Above 5 the prediction
-is exact.
+Two things it should model that the device does, if it doesn't already: `"*"` senders match every
+sender, and a rule falls through when any mapped `fieldMap` group comes back empty.
 
 ## 6. Expect non-bank noise in `/submissions`
 
@@ -95,7 +98,28 @@ field is possible but not free: `firestore.rules` validates the exact document s
 change has to be deployed *before* any phone starts sending the field, or the creates get rejected.
 
 The existing route for over-admission is unchanged and is still the right one: an ignore rule
-(`IGNORE_RULES.md`), not an app release.
+(`IGNORE_RULES.md`), not an app release. It now carries more weight than before: duplicate payments
+and self-transfers are also console work, since the app no longer matches references or pairs
+transfer legs (`PARSING_ARCHITECTURE.md` §7).
+
+## 7. Eight live bank rules capture no merchant
+
+Of the 18 bank rules in v16, eight map no `merchant` group: `hdfcbk_debit_v1`, `sbibnk_debit_v1`,
+`cbssbi_debit_v1`, `axisbk_debit_v1`, `axisbk_credit_v1`, `tmbank_credit_v2`, `myjptr_credit_v1`,
+`onjptr_credit_v1`. They parse, so the amount and direction are right, but the transaction shows as
+"(no merchant)" and the merchant→category learning has nothing to key on — so those spends can never
+be auto-categorised.
+
+This mattered less when a built-in template might read the same message and find a payee. Nothing
+does now. Worth surfacing in the console: a rule with an `amount` but no `merchant` group is
+incomplete rather than finished.
+
+## 8. Still unpublished, and visible in the corpus
+
+The HDFC NEFT narration (`Info: NEFT Dr-…-NPS Contribution M`) has no rule, so its merchant reads
+"HDFC Bank XX3941" — the app used to guess "NPS Contribution" out of that narration and no longer
+does. `PARSING_ARCHITECTURE.md` §4 carries a tested regex for it. Canara's `Dr.`/`Cr.` alerts still
+reach nobody's rule and sit in review.
 
 ## What the app side owes the console
 

@@ -157,11 +157,30 @@ it matters.
 
 ## 10. Checklist
 
-- [ ] §2 `applyRule` fills `accountLabel` from `account`; `ParsedSms` loses `referenceId`,
+- [x] §2 `applyRule` fills `accountLabel` from `account`; `ParsedSms` loses `referenceId` and
       `counterpartyAccount`.
-- [ ] §3 `"*"` senders in `tryMatch` and `isIgnoredMessage`.
-- [ ] §4 no bundled rules; Import SMS history syncs first; an empty cache matches nothing.
-- [ ] §5 removals; review heuristics moved.
-- [ ] §6 migration 7 → 8 + `MigrationTest`.
-- [ ] §8 tests.
-- [ ] REQUIREMENTS.md §5/§5.2; mark `BANK_RULES_FIRST.md` §2 superseded.
+- [x] §3 `"*"` senders in `tryMatch` and `isIgnoredMessage` (`RemoteRule.appliesTo`), and
+      deliberately not in `discardSenders`.
+- [x] §4 no bundled rules; Import SMS history syncs first and warns in its summary if it couldn't;
+      an empty cache matches nothing.
+- [x] §5 removals; review heuristics moved to `data/sms/ReviewHeuristics.kt`. **One deviation:**
+      `SmsRepository.findExactBodyResend` is kept. Two of `reconcileWithExisting`'s three branches
+      were about references and transfers, but that one matches a byte-identical body — and the
+      unique index on `raw_sms(sender, body, receivedAt)` only rejects a redelivery carrying the
+      *same* timestamp, so without it a bank redelivering an alert later becomes a second
+      transaction. That is a different thing from the duplicate §7 accepts.
+- [x] §6 migration 7 → 8 + `MigrationTest` (7 → 8, and the 6 → 8 path a phone on the last release
+      takes). `app/schemas/…/8.json` committed.
+- [x] §8 tests. `RealMessageTest` and `SmsRepositoryTest` run the **real published rules**, copied
+      into `src/test/resources` (`generic-rules.json` from the console repo, the TMBANK rules from
+      the live `/rules/current`) and shipped into the instrumentation APK's assets by the build.
+      Every §4 expectation in this document was reproduced, including the NPS merchant regression.
+- [x] REQUIREMENTS.md §5/§5.2 rewritten, §5.3 added for `"*"`; `BANK_RULES_FIRST.md` §2 marked
+      superseded. `ARCHITECTURE.md`, `SMS_PARSING.md` and `TESTING.md` updated too — they described
+      the templates, the transfer pairing and the "My accounts" screen.
+- [ ] Release, then on the phone: the v8 migration runs once (paired transfers become a plain debit
+      and a plain credit, so those months' spending and income both rise), and the
+      import-with-no-rules warning has never been seen rendered.
+- [ ] Console: publish an HDFCBK rule that reads `NPS Contribution` out of the NEFT narration (§4
+      carries the regex), and note that 8 of the 18 live bank rules map no `merchant` group, so
+      those parse into "(no merchant)" rows the merchant→category learning can't key on.

@@ -5,7 +5,13 @@ design below is agreed; for now it holds only this spec.
 
 ## 1. Context
 
-ExpenseTracker parses bank/UPI SMS in three tiers today (see `data/sms/SmsParser.kt`):
+> **Since implemented, and then simplified.** The tiers this section describes have collapsed into
+> the single published rule list in §5: `BankTemplates` is gone, the app ships no rules at all, and
+> the generic regexes below are now ordinary published rules with `senders: ["*"]`. See
+> `PARSING_ARCHITECTURE.md` for why. The rest of this document — the schema, redaction, sync and
+> submission — is unaffected and still current.
+
+ExpenseTracker parsed bank/UPI SMS in three tiers when this was written (see `data/sms/SmsParser.kt`):
 
 1. `BankTemplates` — built-in regex per bank, shipped in the APK.
 2. `LearnedPatternDao` (via `PatternLearner`) — per-device patterns derived the first time
@@ -57,41 +63,40 @@ data/remoterules/
   SubmissionRepository.kt    // writes to Firebase /submissions
 ```
 
-## 5. Parsing engine changes
+## 5. Parsing engine
 
-New tier order inside `SmsParser.parse`:
+The order inside `SmsParser.parse`. There is one rule list and no built-in templates
+(`PARSING_ARCHITECTURE.md`):
 
-1. `ALWAYS_IGNORE_SENDERS` / `discardSenders` (unchanged)
-2. **`RemoteRulesRepository.isIgnoredMessage`** (new, see `IGNORE_RULES.md`) — a published
-   sender+pattern pair saying this *kind* of message isn't a transaction (a declined-payment
-   alert, say). Runs before any parsing tier below, so a built-in template or remote rule can't
-   still book the non-payment it describes.
-3. **`RemoteRulesRepository.tryBankRules`** — cached remote rules for this sender with
-   `priority` ≥ `BANK_RULE_MIN_PRIORITY` (5), ordered by `priority` descending, same discipline as
-   `BankTemplates.findMatch` (try every matching rule before giving up, don't abort on the first
-   sender match). **Priorities 1–4 are reserved** for the console's generic `android_*` copies of
-   the built-in templates; bank-specific rules use 10 and up.
+1. `ALWAYS_IGNORE_SENDERS` / `discardSenders`
+2. **`RemoteRulesRepository.isIgnoredMessage`** (`IGNORE_RULES.md`) — a published sender+pattern pair
+   saying this *kind* of message isn't a transaction (a declined-payment alert, say). Runs before any
+   rule below, so a rule can't still book the non-payment it describes.
+3. **`RemoteRulesRepository.tryMatch`** — the cached published rules that apply to this sender,
+   ordered by `priority` descending; the first that matches *and* fills every `fieldMap` group wins,
+   and a rule missing a mapped field falls through to the next. A rule whose `senders` contain `"*"`
+   applies to every sender (§5.3). Priority is the only ordering: bank-specific rules are published
+   at 10 and up, the generic any-sender rules at 6 down to 1.
 
-   These run *before* the templates because a template answers first whatever a rule's priority,
-   and a generic shape can be read badly: on a Federal UPI debit the template takes the merchant as
-   `VPA landlord` from `landlord.ravi@ybl`, stopping at the dot in the handle, and
-   `looksLikeAccountOrNumber` accepts it. A rule reviewed against that sender's real messages is
-   the fix, and it can only be the fix if it runs first.
-4. `BankTemplates.findMatch` (unchanged)
-5. **`RemoteRulesRepository.tryFallbackRules`** — the remaining rules, `priority` < 5. The generic
-   copies run *after* the templates on purpose: the in-app templates read more from the same
-   message than any rule can carry (`resolveNonMerchant`, `COUNTERPARTY_ACCOUNT` — which
-   `TransferMatcher` needs — and the block formats), while a rule yields only amount, direction
-   and merchant. Running the copies first would swap a richer parse for a plainer one on every
-   bank. They still catch what no template reads.
-6. `LearnedPatternDao` per-device patterns (unchanged)
-7. Review queue — admitted by `BankTemplates.looksFinancial`, which reads a message's *structure*
+   A match yields amount, direction, merchant, the `account` group as captured, and the date from
+   `SmsDateParser.parse(body)`. `date`, `ref` and `balance` stay valid `fieldMap` names and must
+   still be non-empty — a rule that matched the wrong span usually leaves one blank — but their
+   values aren't stored.
+4. `LearnedPatternDao` per-device patterns. Every rule outranks these: a rule was reviewed against
+   real samples and reaches every phone, while a learned pattern is a same-device guess
+   `PatternLearner` made from one confirmation.
+5. Review queue — admitted by `ReviewHeuristics.looksFinancial`, which reads a message's *structure*
    (a masked account, a reference, a balance, a UPI handle) as well as its verbs. A closed list of
    verbs couldn't keep up with how each bank abbreviates its own alerts: Canara writes `Dr.`/`Cr.`,
    an ATM writes `W/D`, and a message no verb matched was discarded without a row — so exactly the
    messages most in need of a rule could never ask for one. An amount is still required, and it
    must be an amount that isn't the balance, which keeps a bare balance enquiry out. Over-admission
    is corrected from the console with an ignore rule (`IGNORE_RULES.md`), not an app release.
+
+**Before the first sync** there is no cached set, so nothing matches and every financial-looking
+message waits in review. The first successful sync re-reads the whole queue *and* the skipped
+messages (§8.1), so they clear without any other action. Settings → Import SMS history syncs first
+for the same reason, and warns in its summary if it couldn't.
 
 Remote rules also carry `discardSenders` — merged into `SmsParser.ALWAYS_IGNORE_SENDERS`
 at parse time, so a noisy sender you identify from one person's submissions (e.g. a new
@@ -116,12 +121,9 @@ selection has to follow this exact order:
    `ignoreRules` entry whose `senders` contain the normalized sender and whose `pattern` matches
    anywhere in the body → treat as noise. No `fieldMap` to satisfy, no `priority`; any match is
    enough and order among ignore rules doesn't matter.
-3. Otherwise, walk rules whose `senders` contain the normalized sender, by `priority` descending
-   (ties keep list order as published). The app walks this list in two halves — `priority` ≥ 5
-   before `BankTemplates.findMatch`, `priority` < 5 after it — which doesn't change the order rules
-   are tried in, only which side of the templates each half sits on. The console's publish check
-   (`impact.js`) simulates remote rules alone in priority order, so it already predicts this for
-   everything except the templates' own extra reading.
+3. Otherwise, walk rules that apply to the normalized sender — its own, plus any with `"*"` — by
+   `priority` descending (ties keep list order as published). Nothing runs between them, so the
+   console's publish check (`impact.js`) predicts the device exactly.
 4. The first rule that matches the body **and** yields a non-empty value for every `fieldMap`
    group wins; a rule missing a mapped field falls through to the next candidate.
 5. Rules (and ignore rules) that fail to compile (§10) are skipped, never considered a match.
@@ -130,6 +132,18 @@ Rationale for putting remote rules *before* local learned patterns: a remote rul
 reviewed by you against real samples and is shared infrastructure; a local learned pattern
 is a same-device guess PatternLearner made from one confirmation and should be superseded
 the moment a better, reviewed rule exists for that sender.
+
+### 5.3 Any-sender rules: `senders: ["*"]`
+
+A rule or ignore rule whose `senders` contain `"*"` applies to every sender:
+`"*" in senders || normalizedSender in senders` (`RemoteRule.appliesTo`). This is what lets the
+generic rules — the ones that used to be built-in templates — be ordinary published rules.
+
+`discardSenders` deliberately does **not** honour it. The console doesn't offer it there, and a
+published `"*"` would silence every message on every phone with no way back but another sync.
+
+App versions before this one compare senders literally, so they never match a `"*"` rule. That was
+safe at the time, because they still had their built-in templates.
 
 ## 6. Redaction — the part that matters most
 

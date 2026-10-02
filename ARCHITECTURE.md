@@ -290,8 +290,8 @@ sequenceDiagram
     participant RX as SmsReceiver
     participant SR as SmsRepository
     participant PS as SmsParser
-    participant BT as BankTemplates<br/>tier 1
-    participant LP as learned_patterns<br/>tier 2
+    participant RR as RemoteRulesRepository<br/>the published rule list
+    participant LP as learned_patterns<br/>per-device fallback
     participant DBt as DB tables
     participant UI as ReviewQueueScreen
 
@@ -300,10 +300,10 @@ sequenceDiagram
     RX->>SR: ingest(sender, body, receivedAt)
     SR->>PS: parse(sender, body)
 
-    PS->>BT: findMatch(sender, body)
-    alt tier 1 — known bank template matches
-        BT-->>PS: ParsedSms
-    else try tier 2 — a pattern learned earlier
+    PS->>RR: tryMatch(sender, body)
+    alt a published rule reads it
+        RR-->>PS: ParsedSms
+    else try a pattern learned on this device
         PS->>LP: getForSender(sender)
         LP-->>PS: LearnedPatternEntity or null
         PS->>PS: PatternLearner.applyToBody(...)
@@ -322,7 +322,7 @@ sequenceDiagram
         SR->>DBt: insert transactions row
         SR->>DBt: update raw_sms → PARSED + linkedTransactionId
         SR->>LP: PatternLearner.derive(...) → new learned pattern
-        Note over LP: the next SMS from this sender<br/>now parses on its own via tier 2
+        Note over LP: the next SMS from this sender<br/>parses on its own, until a rule covers it
     else ParseOutcome.Ignored — not a financial message
         PS-->>SR: Ignored
         Note over SR: dropped; nothing is stored
@@ -335,17 +335,18 @@ The files, in the order the message travels through them:
 | --- | --- | --- |
 | Receive | [data/sms/SmsReceiver.kt](app/src/main/java/com/example/expensetracker/data/sms/SmsReceiver.kt) | A receiver's `onReceive` runs on the main thread and must return fast, so it calls `goAsync()` to ask the OS for extra time, then does the DB work on `Dispatchers.IO`. Multi-part SMS are re-joined by sender first. |
 | Orchestrate | [data/repository/SmsRepository.kt](app/src/main/java/com/example/expensetracker/data/repository/SmsRepository.kt) | `ingest()` and `confirmReview()` — the only two entry points into this pipeline. |
-| Decide | [data/sms/SmsParser.kt](app/src/main/java/com/example/expensetracker/data/sms/SmsParser.kt) | 12 lines; the whole three-tier decision lives here. |
-| Tier 1 | [data/sms/BankTemplates.kt](app/src/main/java/com/example/expensetracker/data/sms/BankTemplates.kt) | Built-in regexes per known sender. Currently one generic "Rs X debited/credited to/from Y" shape shared by all banks — a starting point, not tuned against real traffic. |
-| Tier 2/3 | [data/sms/PatternLearner.kt](app/src/main/java/com/example/expensetracker/data/sms/PatternLearner.kt) | `derive()` builds a regex by finding the confirmed amount and merchant back inside the original body and replacing those spans with capture groups. `applyToBody()` replays it later. |
-| Types | [data/sms/ParsedSms.kt](app/src/main/java/com/example/expensetracker/data/sms/ParsedSms.kt) | `ParsedSms` plus the `ParseOutcome` sealed interface — `Parsed` / `NeedsReview` / `Ignored`. |
+| Decide | [data/sms/SmsParser.kt](app/src/main/java/com/example/expensetracker/data/sms/SmsParser.kt) | The whole order lives here, in about 20 lines. |
+| Read it | [data/remoterules/RemoteRulesRepository.kt](app/src/main/java/com/example/expensetracker/data/remoterules/RemoteRulesRepository.kt) | The published rule list, highest priority first. The app ships **no** rules and no built-in templates: everything that turns an SMS into a transaction comes from the console by sync, so a bank changing its wording is a rule edit rather than an app release (`data/remoterules/PARSING_ARCHITECTURE.md`). |
+| Fall back | [data/sms/PatternLearner.kt](app/src/main/java/com/example/expensetracker/data/sms/PatternLearner.kt) | `derive()` builds a regex by finding the confirmed amount and merchant back inside the original body and replacing those spans with capture groups. `applyToBody()` replays it later. Per-device, and outranked by any rule. |
+| Judge the rest | [data/sms/ReviewHeuristics.kt](app/src/main/java/com/example/expensetracker/data/sms/ReviewHeuristics.kt) | The only message-reading left in the app, and it extracts nothing: it decides whether an unmatched message is worth a person's attention, worth a row, or neither. |
+| Types | [data/sms/ParsedSms.kt](app/src/main/java/com/example/expensetracker/data/sms/ParsedSms.kt) | `ParsedSms` plus the `ParseOutcome` sealed interface — `Parsed` / `NeedsReview` / `IgnoredAsNoise` / `Discarded` / `Ignored`. |
 
 Every raw message that isn't discarded is kept in `raw_sms`, so its status tells you where it is:
 
 ```mermaid
 stateDiagram-v2
     [*] --> Arrived: SMS_RECEIVED
-    Arrived --> PARSED: tier 1 or tier 2 matched
+    Arrived --> PARSED: a rule or learned pattern matched
     Arrived --> NEEDS_REVIEW: looks financial, no pattern matched
     Arrived --> [*]: Ignored — not stored at all
     NEEDS_REVIEW --> PARSED: user confirms in Review tab<br/>(also derives a learned pattern)
@@ -362,14 +363,14 @@ Three details of this pipeline are easy to miss and each exists for a reason:
   message ever matched.
 - **Sender lookups are normalised** (`AD-FEDBNK`, `VM-FEDBNK`, `JD-FEDBNK-S` → `FEDBNK`), because the
   operator prefix on Indian sender IDs rotates.
-- **Two SMS can describe one payment.** A transfer produces both a debit alert and a confirmation,
-  linked by the bank's reference; `SmsRepository.reconcileWithExisting` keeps the debit and links
-  both raw messages to it, so the money isn't counted twice.
-- **But two SMS can also describe one payment's *two legs*.** Moving money between your own accounts
-  changes two balances, so both rows are kept and linked by `transferGroupId` instead of merged —
-  merging would erase the receiving account's history. The two cases are told apart by whether the
-  messages name two *different* accounts. See `TransferMatcher` and
-  [SMS_PARSING.md §5c](SMS_PARSING.md).
+- **Two SMS can describe one payment** — a debit alert and the bank's own confirmation, or the bank's
+  message and a UPI app's. Both become transactions, and collapsing them is the console's job: a
+  discarded sender, or an ignore rule for the second message's wording. The app used to match them
+  on the bank's reference and merge them, which it no longer does
+  (`data/remoterules/PARSING_ARCHITECTURE.md` §7).
+- **The exception is a redelivery of the *same* message.** `SmsRepository.findExactBodyResend`
+  matches on the literal body, because the unique index only catches a redelivery carrying the same
+  timestamp.
 
 For the behavioural side — which message formats actually match, traced examples of each of the three
 outcomes, and the remaining accuracy limits — see [SMS_PARSING.md](SMS_PARSING.md).
@@ -507,17 +508,17 @@ flowchart TD
     BB -->|bills| BI["BillsScreen<br/><i>recurring bills + reminders</i>"]
 
     TB -->|categories| C["CategoriesScreen<br/><i>add/edit categories</i>"]
-    TB -->|accounts| A["AccountsScreen<br/><i>claim + name own accounts</i>"]
     TB -->|settings| S["SettingsScreen<br/><i>CSV export, SMS import</i>"]
     C -->|merchant rules| MR["MerchantRulesScreen<br/><i>merchant → category mappings, rename</i>"]
+    S -->|skipped| SK["SkippedMessagesScreen<br/><i>what the parser turned away</i>"]
 
-    NH -.->|"hosts all 9 routes"| D & T & R & BU & BI & C & A & S & MR
+    NH -.->|"hosts all 9 routes"| D & T & R & BU & BI & C & S & MR & SK
 ```
 
 - [ui/navigation/Destinations.kt](app/src/main/java/com/example/expensetracker/ui/navigation/Destinations.kt) —
   a sealed class listing each destination's route string, label and icon. `bottomBarItems` picks the
-  five that get tabs; Categories, My Accounts and Settings are reachable from the top bar, and
-  Merchant Rules is reached from inside Categories.
+  five that get tabs; Categories and Settings are reachable from the top bar, Merchant Rules from
+  inside Categories, and Messages I Skipped from inside Settings.
 - [ui/navigation/NavGraph.kt](app/src/main/java/com/example/expensetracker/ui/navigation/NavGraph.kt) —
   the `Scaffold` and the `NavHost` that maps each route string to its Composable. Tab clicks pop back
   to the start destination first, so the back stack doesn't grow unboundedly as you tab around.
@@ -532,7 +533,7 @@ flowchart TD
 | Change what a screen shows | The `…ViewModel.kt` for that feature — the `Screen.kt` should mostly just render state |
 | Add a query | The relevant DAO in [data/local/dao/](app/src/main/java/com/example/expensetracker/data/local/dao/), then expose it through the matching repository |
 | Add a DB column or table | Edit/add an entity in [data/local/entity/](app/src/main/java/com/example/expensetracker/data/local/entity/), register it in [AppDatabase.kt](app/src/main/java/com/example/expensetracker/data/local/AppDatabase.kt), **bump `version`, and add a `Migration`** — plus a `@TypeConverter` if the type isn't a primitive |
-| Fix a bank's SMS parsing | [data/sms/BankTemplates.kt](app/src/main/java/com/example/expensetracker/data/sms/BankTemplates.kt); anything it misses still degrades safely into the review queue |
+| Fix a bank's SMS parsing | Not here — write a rule on the rules console and publish it. Anything no rule reads still degrades safely into the review queue, and the next sync re-reads the queue. |
 | Change colours / fonts | [ui/theme/](app/src/main/java/com/example/expensetracker/ui/theme/) — `Color.kt`, `Theme.kt`, `Type.kt` |
 | Change money or date formatting | [ui/common/CurrencyFormat.kt](app/src/main/java/com/example/expensetracker/ui/common/CurrencyFormat.kt) / [DateFormat.kt](app/src/main/java/com/example/expensetracker/ui/common/DateFormat.kt) |
 | Change the CSV export | [export/CsvExporter.kt](app/src/main/java/com/example/expensetracker/export/CsvExporter.kt) — writes to `Android/data/<applicationId>/files/exports/` |

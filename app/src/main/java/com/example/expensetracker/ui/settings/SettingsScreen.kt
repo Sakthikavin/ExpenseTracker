@@ -336,6 +336,15 @@ private fun ImportSheet(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (progress.ranWithoutRules) {
+                    Text(
+                        "Couldn't load the parsing rules, so nothing could be matched — the " +
+                            "messages are in your review queue and will be re-checked " +
+                            "automatically the next time the rules load.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = StatusWarning,
+                    )
+                }
                 SummaryRow("Transactions added", progress.imported.toString())
                 SummaryRow("Needs your review", progress.needsReview.toString(), StatusWarning)
                 SummaryRow("Not financial (ignored)", progress.ignored.toString())
@@ -351,7 +360,7 @@ private fun ImportSheet(
             } else {
                 Text("Scanning your messages", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
-                    "Reading SMS from your device and matching them against bank templates — " +
+                    "Reading SMS from your device and matching them against the published rules — " +
                         "this only runs once. You can leave this open or check back later.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

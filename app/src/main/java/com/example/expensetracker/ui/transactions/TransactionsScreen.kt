@@ -60,7 +60,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.expensetracker.data.local.entity.CategoryEntity
 import com.example.expensetracker.data.local.entity.Direction
-import com.example.expensetracker.data.local.entity.OwnAccountEntity
 import com.example.expensetracker.data.local.entity.RawSmsEntity
 import com.example.expensetracker.data.local.entity.TransactionEntity
 import com.example.expensetracker.ui.common.AddTransactionDialog
@@ -90,7 +89,6 @@ fun TransactionsScreen(
         TransactionsViewModel(
             container.transactionRepository,
             container.categoryRepository,
-            container.transferRepository,
             filter,
             container.merchantCategoryRuleRepository,
             container.smsRepository,
@@ -98,12 +96,10 @@ fun TransactionsScreen(
     }
     val groupedItems by viewModel.groupedItems.collectAsState()
     val categories by viewModel.categories.collectAsState()
-    val ownAccounts by viewModel.ownAccounts.collectAsState()
     val filterSummary by viewModel.filterSummary.collectAsState()
     val categorizePrompt by viewModel.categorizePrompt.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<TransactionEntity?>(null) }
-    var pendingTransferFor by remember { mutableStateOf<TransactionEntity?>(null) }
 
     Scaffold(
         floatingActionButton = {
@@ -134,14 +130,7 @@ fun TransactionsScreen(
                                         categories = categories,
                                         onDelete = { pendingDelete = item.transaction },
                                         onCategorySelected = { viewModel.updateCategory(item.transaction, it) },
-                                        onMarkTransfer = { pendingTransferFor = item.transaction },
                                         loadRawSms = { viewModel.rawSmsFor(item.transaction) },
-                                    )
-
-                                    is TransactionListItem.Transfer -> TransferRow(
-                                        item = item,
-                                        ownAccounts = ownAccounts,
-                                        onUnlink = { viewModel.unlinkTransfer(item.groupId) },
                                     )
                                 }
                                 HorizontalDivider()
@@ -189,25 +178,6 @@ fun TransactionsScreen(
                 Button(onClick = { viewModel.delete(transaction.id); pendingDelete = null }) { Text("Delete") }
             },
             dismissButton = { Button(onClick = { pendingDelete = null }) { Text("Cancel") } },
-        )
-    }
-
-    pendingTransferFor?.let { transaction ->
-        var candidates by remember(transaction.id) { mutableStateOf(emptyList<TransactionEntity>()) }
-        LaunchedEffect(transaction.id) { candidates = viewModel.transferCandidates(transaction) }
-
-        MarkTransferDialog(
-            transaction = transaction,
-            candidates = candidates,
-            onDismiss = { pendingTransferFor = null },
-            onPick = { counterpart ->
-                viewModel.linkTransfer(transaction, counterpart)
-                pendingTransferFor = null
-            },
-            onNoCounterpart = {
-                viewModel.markSingleLegTransfer(transaction)
-                pendingTransferFor = null
-            },
         )
     }
 
@@ -322,7 +292,6 @@ private fun TransactionRow(
     categories: List<CategoryEntity>,
     onDelete: () -> Unit,
     onCategorySelected: (Long?) -> Unit,
-    onMarkTransfer: () -> Unit,
     loadRawSms: suspend () -> RawSmsEntity?,
 ) {
     var categoryMenuExpanded by remember { mutableStateOf(false) }
@@ -384,13 +353,6 @@ private fun TransactionRow(
                             expanded = overflowExpanded,
                             onDismissRequest = { overflowExpanded = false },
                         ) {
-                            DropdownMenuItem(
-                                text = { Text("Mark as transfer") },
-                                onClick = {
-                                    overflowExpanded = false
-                                    onMarkTransfer()
-                                },
-                            )
                             DropdownMenuItem(
                                 text = { Text("Delete") },
                                 onClick = {
@@ -471,121 +433,4 @@ private fun OriginalMessagePanel(loadRawSms: suspend () -> RawSmsEntity?) {
             }
         }
     }
-}
-
-/**
- * A transfer between the user's own accounts, shown as the single event it was rather than as a
- * debit and a credit that appear to cancel out.
- */
-@Composable
-private fun TransferRow(
-    item: TransactionListItem.Transfer,
-    ownAccounts: List<OwnAccountEntity>,
-    onUnlink: () -> Unit,
-) {
-    var overflowExpanded by remember { mutableStateOf(false) }
-
-    fun nameFor(label: String): String =
-        ownAccounts.firstOrNull { it.label.equals(label, ignoreCase = true) }?.displayName
-            ?: label.ifBlank { "unknown" }
-
-    val route = when {
-        item.out != null && item.into != null ->
-            "${nameFor(item.out.accountLabel)} → ${nameFor(item.into.accountLabel)}"
-        item.out != null -> "from ${nameFor(item.out.accountLabel)}"
-        else -> "to ${nameFor(item.into!!.accountLabel)}"
-    }
-
-    ListItem(
-        headlineContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Filled.SwapHoriz,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
-                )
-                Text("  Transfer · $route")
-            }
-        },
-        supportingContent = {
-            Text(
-                if (item.isComplete) "Not counted as spending" else "Not counted as spending · one leg only",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        },
-        trailingContent = {
-            Row {
-                Text(
-                    text = formatMinorUnitsAsInr(item.amountMinor),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Box {
-                    IconButton(onClick = { overflowExpanded = true }) {
-                        Icon(Icons.Filled.MoreVert, contentDescription = "More")
-                    }
-                    DropdownMenu(
-                        expanded = overflowExpanded,
-                        onDismissRequest = { overflowExpanded = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Not a transfer") },
-                            onClick = {
-                                overflowExpanded = false
-                                onUnlink()
-                            },
-                        )
-                    }
-                }
-            }
-        },
-    )
-}
-
-/**
- * Picks the other leg of a transfer. Candidates are opposite-direction transactions of a similar
- * amount nearby in time, closest amount first — but the user always chooses.
- */
-@Composable
-private fun MarkTransferDialog(
-    transaction: TransactionEntity,
-    candidates: List<TransactionEntity>,
-    onDismiss: () -> Unit,
-    onPick: (TransactionEntity) -> Unit,
-    onNoCounterpart: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Mark as transfer") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "Which transaction is the other side of this " +
-                        "${formatMinorUnitsAsInr(transaction.amountMinor)} movement?",
-                )
-                if (candidates.isEmpty()) {
-                    Text(
-                        "Nothing nearby matches. You can still mark it as a transfer on its own — " +
-                            "useful when only one bank sent a message.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                } else {
-                    candidates.forEach { candidate ->
-                        ListItem(
-                            headlineContent = { Text(candidate.merchant.ifBlank { "(no merchant)" }) },
-                            supportingContent = { Text(formatDate(candidate.occurredAt)) },
-                            trailingContent = {
-                                val sign = if (candidate.direction == Direction.DEBIT) "-" else "+"
-                                Text("$sign${formatMinorUnitsAsInr(candidate.amountMinor)}")
-                            },
-                            modifier = Modifier.clickable { onPick(candidate) },
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onNoCounterpart) { Text("No matching message") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
 }

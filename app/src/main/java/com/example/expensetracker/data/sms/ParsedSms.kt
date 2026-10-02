@@ -4,23 +4,21 @@ import com.example.expensetracker.data.local.entity.Direction
 import java.math.BigDecimal
 import kotlinx.datetime.Instant
 
+/**
+ * Everything a matched rule yields (`PARSING_ARCHITECTURE.md` §2) — four fields read from the
+ * message plus the date, and nothing computed afterwards.
+ */
 data class ParsedSms(
     val amountMinor: Long,
     val direction: Direction,
     val merchant: String,
+    /**
+     * The rule's `account` group, as captured — blank when the rule doesn't map one, which is the
+     * case for all the generic any-sender rules.
+     */
     val accountLabel: String = "",
     /** The date named in the message, when one could be read; null means "fall back to receipt time". */
     val occurredAt: Instant? = null,
-    /**
-     * The bank's own transaction reference, when the message carries one. Two messages describing
-     * the same movement of money share it, which is how a duplicate is recognised.
-     */
-    val referenceId: String? = null,
-    /**
-     * The account on the *other* side of the movement — the destination of a transfer. When this is
-     * one of the user's own accounts the transaction is a self-transfer, not spending.
-     */
-    val counterpartyAccount: String? = null,
 )
 
 sealed interface ParseOutcome {

@@ -7,6 +7,8 @@ import com.example.expensetracker.data.local.AppDatabase
 import com.example.expensetracker.data.local.entity.Direction
 import com.example.expensetracker.data.local.entity.ParseStatus
 import com.example.expensetracker.data.local.entity.RawSmsEntity
+import com.example.expensetracker.data.remoterules.RemoteRulesApi
+import com.example.expensetracker.data.remoterules.RemoteRulesRepository
 import com.example.expensetracker.data.sms.SmsParser
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -34,24 +36,35 @@ class SmsRepositoryTest {
         "Debited Rs 1.00 from a/c X6686 on 01Aug26 19:00 via UPI to KEERTHANA KU. " +
             "Ref 621312687340.Bal Rs 42727.9. -Federal Bank"
 
-    private lateinit var transferRepository: TransferRepository
+    private lateinit var parser: SmsParser
 
     @Before
     fun setUp() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
-        transferRepository = TransferRepository(
-            transactionDao = db.transactionDao(),
-            ownAccountDao = db.ownAccountDao(),
-            categoryDao = db.categoryDao(),
-        )
+        parser = SmsParser(db.learnedPatternDao(), remoteRulesRepository = publishedRules())
         repository = SmsRepository(
             rawSmsDao = db.rawSmsDao(),
             learnedPatternDao = db.learnedPatternDao(),
             transactionRepository = TransactionRepository(db.transactionDao()),
-            parser = SmsParser(db.learnedPatternDao()),
-            transferRepository = transferRepository,
+            parser = parser,
         )
+    }
+
+    /**
+     * The published generic rules, from the copy of the console's `generic-rules.json` that
+     * `src/test/resources` holds and the build ships into the instrumentation APK's assets.
+     *
+     * Needed because the app parses nothing by itself any more: without a rule set these tests
+     * would exercise the ingest path with every message falling through to the review queue.
+     */
+    private fun publishedRules(): RemoteRulesRepository {
+        val json = InstrumentationRegistry.getInstrumentation().context.assets
+            .open("generic-rules.json").bufferedReader().use { it.readText() }
+        val prefs = InstrumentationRegistry.getInstrumentation().targetContext
+            .getSharedPreferences("sms_repository_test_rules", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putString("remote_rules_cached_set", json).commit()
+        return RemoteRulesRepository(RemoteRulesApi(), prefs)
     }
 
     @After
@@ -70,13 +83,9 @@ class SmsRepositoryTest {
         assertEquals(100, transactions.single().amountMinor)
     }
 
-    /**
-     * Two real payments are two transactions. They are told apart by the bank's reference, not by
-     * their wording: an identical body carrying an identical reference is the *same* payment
-     * however far apart the two copies arrive.
-     */
+    /** Two payments whose messages differ are two transactions, however close together they land. */
     @Test
-    fun twoRealPaymentsWithDifferentReferencesAreBothKept() = runBlocking {
+    fun twoPaymentsWithDifferentMessagesAreBothKept() = runBlocking {
         repository.ingest("AD-FEDBNK", federalSms, Instant.fromEpochMilliseconds(1_785_657_168_000))
         repository.ingest(
             "AD-FEDBNK",
@@ -85,14 +94,6 @@ class SmsRepositoryTest {
         )
 
         assertEquals(2, db.transactionDao().observeAll().first().size)
-    }
-
-    @Test
-    fun aRepeatOfTheSameReferenceIsNeverCountedTwice() = runBlocking {
-        repository.ingest("AD-FEDBNK", federalSms, Instant.fromEpochMilliseconds(1_785_657_168_000))
-        repository.ingest("AD-FEDBNK", federalSms, Instant.fromEpochMilliseconds(1_785_657_999_000))
-
-        assertEquals(1, db.transactionDao().observeAll().first().size)
     }
 
     @Test
@@ -138,11 +139,11 @@ class SmsRepositoryTest {
         val apy = transactions.first { it.amountMinor == 29200L }
         assertEquals(Direction.DEBIT, apy.direction)
         assertEquals("APY", apy.merchant)
-        assertEquals("XX4795", apy.accountLabel)
+        // The generic rules map no `account` group, so nothing fills the label (§2).
+        assertEquals("", apy.accountLabel)
 
         val upi = transactions.first { it.amountMinor == 5800L }
         assertEquals("Google India Digital Serv", upi.merchant)
-        assertEquals("119088866187", upi.referenceId)
     }
 
     // --- one payment, two messages ---
@@ -154,49 +155,27 @@ class SmsRepositoryTest {
     private val npsCredit = "HDFC Bank : NEFT money transfer Txn No HDFCH00842011992 for Rs INR 5,000.00 " +
         "has been credited to SAKTHI KAVIN S S on 05-03-2026 at 04:01:54"
 
-    @Test
-    fun theNpsPairBecomesOneDebit() = runBlocking {
-        repository.ingest("AD-HDFCBK", npsDebit, Instant.fromEpochMilliseconds(1_772_000_000_000))
-        repository.ingest("AD-HDFCBK", npsCredit, Instant.fromEpochMilliseconds(1_772_000_060_000))
-
-        val transactions = db.transactionDao().observeAll().first()
-        assertEquals("two messages, one payment", 1, transactions.size)
-        assertEquals(500000, transactions.single().amountMinor)
-        assertEquals(
-            "the money left the account, so it is a debit",
-            Direction.DEBIT,
-            transactions.single().direction,
-        )
-    }
-
-    @Test
-    fun theNpsPairIsStillOneDebitWhenTheConfirmationArrivesFirst() = runBlocking {
-        repository.ingest("AD-HDFCBK", npsCredit, Instant.fromEpochMilliseconds(1_772_000_000_000))
-        repository.ingest("AD-HDFCBK", npsDebit, Instant.fromEpochMilliseconds(1_772_000_060_000))
-
-        val transactions = db.transactionDao().observeAll().first()
-        assertEquals(1, transactions.size)
-        assertEquals(Direction.DEBIT, transactions.single().direction)
-    }
-
-    @Test
-    fun bothMessagesStayLinkedToTheSurvivingTransaction() = runBlocking {
-        repository.ingest("AD-HDFCBK", npsDebit, Instant.fromEpochMilliseconds(1_772_000_000_000))
-        repository.ingest("AD-HDFCBK", npsCredit, Instant.fromEpochMilliseconds(1_772_000_060_000))
-
-        val transactionId = db.transactionDao().observeAll().first().single().id
-        val rawRows = db.rawSmsDao().observeByStatus(ParseStatus.PARSED).first()
-        assertEquals("both messages are kept for audit", 2, rawRows.size)
-        assertTrue(
-            "both must point at the surviving transaction",
-            rawRows.all { it.linkedTransactionId == transactionId },
-        )
-    }
-
     /**
-     * The counterpart rule must not swallow a refund: same amount, same day, opposite direction is
-     * exactly what a refund looks like, so only transfer wording may trigger the fallback.
+     * Two messages about one payment are two transactions now, and that's the documented behaviour
+     * (`PARSING_ARCHITECTURE.md` §7): the debit alert and the NEFT confirmation share a reference,
+     * but nothing on the device matches on references any more. Collapsing them is the console's
+     * job — a discarded sender, or an ignore rule for the confirmation's wording.
      */
+    @Test
+    fun theNpsPairIsTwoTransactionsAndTheConsoleResolvesIt() = runBlocking {
+        repository.ingest("AD-HDFCBK", npsDebit, Instant.fromEpochMilliseconds(1_772_000_000_000))
+        repository.ingest("AD-HDFCBK", npsCredit, Instant.fromEpochMilliseconds(1_772_000_060_000))
+
+        val transactions = db.transactionDao().observeAll().first()
+        assertEquals(2, transactions.size)
+        assertEquals(
+            "both legs are real messages, each kept with its own row",
+            2,
+            db.rawSmsDao().observeByStatus(ParseStatus.PARSED).first().size,
+        )
+    }
+
+    /** A refund is its own event: same amount, same day, opposite direction, two transactions. */
     @Test
     fun aSameDayRefundIsNotMergedIntoThePurchase() = runBlocking {
         repository.ingest(
@@ -214,48 +193,40 @@ class SmsRepositoryTest {
         assertEquals("a refund is its own event", 2, transactions.size)
     }
 
-    // --- transfers between the user's own accounts ---
+    // --- what used to be transfer pairing ---
 
-    /** HDFC → ICICI: two banks, two real legs, one movement of money. */
+    /** HDFC → ICICI: two banks, two messages, one movement of the user's own money. */
     private val hdfcOut = "Sent Rs.10000.00\nFrom HDFC Bank A/C *3941\nTo ICICI Bank A/C XX4795\n" +
         "On 02/08/26\nRef 512345678901"
 
     private val iciciIn = "INR 10,000.00 credited to ICICI Bank A/C XX4795 on 02-Aug-26. " +
         "Info: IMPS/512345678901/HDFC BANK. Avl Bal INR 25,000.00"
 
+    /**
+     * A self-transfer is now an ordinary debit and an ordinary credit, and both count
+     * (`PARSING_ARCHITECTURE.md` §6/§7). This is the user-visible cost of dropping the pairing:
+     * a month with a transfer in it reports more spending *and* more income than it used to.
+     */
     @Test
-    fun aCrossBankSelfTransferIsPairedAndExcludedFromTotals() = runBlocking {
+    fun aSelfTransferBecomesAnOrdinaryDebitAndCredit() = runBlocking {
         repository.ingest("VM-HDFCBK", hdfcOut, Instant.fromEpochMilliseconds(1_785_657_168_000))
         repository.ingest("AD-ICICIB", iciciIn, Instant.fromEpochMilliseconds(1_785_657_268_000))
 
         val transactions = db.transactionDao().observeAll().first()
         assertEquals("both legs are kept — each account's history is real", 2, transactions.size)
-        assertTrue(
-            "the shared UTR should have paired them automatically",
-            transactions.all { it.transferGroupId != null },
-        )
-        assertEquals(
-            "both legs belong to the same transfer",
-            1,
-            transactions.mapNotNull { it.transferGroupId }.distinct().size,
-        )
+        assertTrue("nothing pairs them any more", transactions.all { it.transferGroupId == null })
 
         val start = Instant.fromEpochMilliseconds(0)
         val end = Instant.fromEpochMilliseconds(2_000_000_000_000)
         assertEquals(
-            "moving my own money is not spending",
-            0L,
+            "the outgoing leg now counts as spending",
+            1_000_000L,
             db.transactionDao().observeTotalByDirection(start, end, Direction.DEBIT).first(),
         )
         assertEquals(
-            "and it is not income either",
-            0L,
-            db.transactionDao().observeTotalByDirection(start, end, Direction.CREDIT).first(),
-        )
-        assertEquals(
-            "but it is still visible as a transfer",
+            "and the incoming leg as income",
             1_000_000L,
-            db.transactionDao().observeTransferTotal(start, end).first(),
+            db.transactionDao().observeTotalByDirection(start, end, Direction.CREDIT).first(),
         )
     }
 
@@ -273,50 +244,6 @@ class SmsRepositoryTest {
             Direction.DEBIT,
         ).first()
         assertEquals(45000L, total)
-    }
-
-    @Test
-    fun unlinkingATransferMakesBothLegsCountAgain() = runBlocking {
-        repository.ingest("VM-HDFCBK", hdfcOut, Instant.fromEpochMilliseconds(1_785_657_168_000))
-        repository.ingest("AD-ICICIB", iciciIn, Instant.fromEpochMilliseconds(1_785_657_268_000))
-
-        val groupId = db.transactionDao().observeAll().first().first().transferGroupId!!
-        transferRepository.unlink(groupId)
-
-        val transactions = db.transactionDao().observeAll().first()
-        assertTrue("undo must fully detach", transactions.all { it.transferGroupId == null })
-        assertEquals(
-            1_000_000L,
-            db.transactionDao().observeTotalByDirection(
-                Instant.fromEpochMilliseconds(0),
-                Instant.fromEpochMilliseconds(2_000_000_000_000),
-                Direction.DEBIT,
-            ).first(),
-        )
-    }
-
-    @Test
-    fun claimingAccountsPairsATransferThatHasNoSharedReference() = runBlocking {
-        transferRepository.claimAccount("XX1111", "HDFC Savings")
-        transferRepository.claimAccount("XX2222", "ICICI Savings")
-
-        repository.ingest(
-            "VM-HDFCBK",
-            "Rs 5000.00 debited from a/c XX1111 to SELF on 02-08-26.",
-            Instant.fromEpochMilliseconds(1_785_657_168_000),
-        )
-        repository.ingest(
-            "AD-ICICIB",
-            "Rs 5000.00 credited to a/c XX2222 from SELF on 02-08-26.",
-            Instant.fromEpochMilliseconds(1_785_657_268_000),
-        )
-
-        val transactions = db.transactionDao().observeAll().first()
-        assertEquals(2, transactions.size)
-        assertTrue(
-            "both accounts being mine is enough to pair without a reference",
-            transactions.all { it.transferGroupId != null },
-        )
     }
 
     /**
@@ -356,13 +283,12 @@ class SmsRepositoryTest {
     }
 
     /**
-     * A transfer's two legs legitimately share one bank reference, so a naive "any row with this
-     * reference" lookup can match the *other* leg instead of the same leg being resent — mistaking
-     * "this message arrived again" for "here's the other side of the transfer" and creating a
-     * phantom, unpaired duplicate.
+     * Both messages of a self-transfer arriving again — a bank resending, or a rerun seed script.
+     * Each has a different `receivedAt`, so the unique index on `raw_sms` doesn't apply and the
+     * body match is the only thing standing between this and four transactions.
      */
     @Test
-    fun resendingATransferLegDoesNotCreateAPhantomDuplicate() = runBlocking {
+    fun resendingBothLegsOfATransferCreatesNoNewRows() = runBlocking {
         repository.ingest("VM-HDFCBK", hdfcOut, Instant.fromEpochMilliseconds(1_785_657_168_000))
         repository.ingest("AD-ICICIB", iciciIn, Instant.fromEpochMilliseconds(1_785_657_268_000))
 
@@ -371,17 +297,14 @@ class SmsRepositoryTest {
         repository.ingest("VM-HDFCBK", hdfcOut, Instant.fromEpochMilliseconds(1_785_657_368_000))
         repository.ingest("AD-ICICIB", iciciIn, Instant.fromEpochMilliseconds(1_785_657_468_000))
 
-        val transactions = db.transactionDao().observeAll().first()
-        assertEquals("resending both legs must not create new rows", 2, transactions.size)
-        assertTrue("both must remain paired", transactions.all { it.transferGroupId != null })
+        assertEquals("resending both must not create new rows", 2, db.transactionDao().observeAll().first().size)
     }
 
     /**
-     * A plain resend — the same message arriving twice with a different `receivedAt`, no bank
-     * transfer-confirmation wording, and no reference number the parser could extract — must still
+     * A plain resend — the same message arriving twice with a different `receivedAt` — must still
      * not be counted twice. Real senders redeliver failed messages; a rerun seed script does the
-     * same in testing. `findByReference` has nothing to match on here (no `referenceId` was
-     * parsed), so this only works via matching the literal message text against a prior ingest.
+     * same in testing. This is the one duplicate check left (`findExactBodyResend`), and it works
+     * by matching the literal message text against a prior ingest.
      */
     @Test
     fun resendingAnOrdinaryMessageWithNoExtractableReferenceDoesNotDuplicate() = runBlocking {
@@ -562,8 +485,7 @@ class SmsRepositoryTest {
             rawSmsDao = db.rawSmsDao(),
             learnedPatternDao = db.learnedPatternDao(),
             transactionRepository = TransactionRepository(db.transactionDao()),
-            parser = SmsParser(db.learnedPatternDao()),
-            transferRepository = transferRepository,
+            parser = parser,
             reparsePageSize = 25,
         )
         val base = 1_785_000_000_000
@@ -648,7 +570,7 @@ class SmsRepositoryTest {
             rawSmsDao = db.rawSmsDao(),
             learnedPatternDao = db.learnedPatternDao(),
             transactionRepository = TransactionRepository(db.transactionDao()),
-            parser = SmsParser(db.learnedPatternDao()),
+            parser = parser,
             discardedKeep = 3,
         )
         repeat(5) { index ->

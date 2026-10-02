@@ -13,8 +13,8 @@ android {
     // The build *type* must not be what selects the Firestore backend: a debug build is what gets
     // installed for testing, and tying the emulator to it would point every such install at a
     // local emulator that isn't running. Local emulator testing opts in instead via
-    // `-PfirestoreEmulator=true` (or
-    // `firestoreEmulator=true` in a gitignored gradle.properties), which nothing sets by default.
+    // `-PfirestoreEmulator=true` (or `firestoreEmulator=true` in a gitignored gradle.properties),
+    // which nothing sets by default.
     val useEmulatorRules = (findProperty("firestoreEmulator") as String?)?.toBoolean() ?: false
 
     defaultConfig {
@@ -90,9 +90,11 @@ android {
     }
 
     // MigrationTestHelper reads the exported schemas at runtime, so they have to ship inside the
-    // instrumentation APK as assets.
+    // instrumentation APK as assets. `src/test/resources` rides along for the same reason: it holds
+    // the copies of the console's published rules, and both test source sets need them — one copy,
+    // read from the classpath by unit tests and from assets by instrumented ones.
     sourceSets.getByName("androidTest") {
-        assets.srcDirs(files("$projectDir/schemas"))
+        assets.srcDirs(files("$projectDir/schemas"), files("$projectDir/src/test/resources"))
     }
 }
 

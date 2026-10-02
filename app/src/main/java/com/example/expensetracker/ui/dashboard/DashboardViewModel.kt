@@ -58,7 +58,6 @@ data class DashboardUiState(
      * but shown rather than hidden — money that vanishes from a total with no explanation is worse
      * than money counted wrongly.
      */
-    val transferMinor: Long = 0,
     val savedMinor: Long = 0,
     val savedPercentOfIncome: Float = 0f,
     /** Null when the previous period had no income to compare against. */
@@ -187,10 +186,6 @@ class DashboardViewModel(
         transactionRepository.observeTotalByDirection(start.startInstant(), end.endInstant(), Direction.DEBIT)
     }
 
-    private val transfers = _selectedRange.flatMapLatest { (start, end) ->
-        transactionRepository.observeTransferTotal(start.startInstant(), end.endInstant())
-    }
-
     private val spendByCategory = _selectedRange.flatMapLatest { (start, end) ->
         transactionRepository.observeSpendByCategory(start.startInstant(), end.endInstant())
     }
@@ -271,9 +266,6 @@ class DashboardViewModel(
                 .sortedByDescending { it.totalMinor },
         )
     }
-        // Folded in separately: `combine` only takes five flows before it degrades into an
-        // untyped array, and this reads better than casting.
-        .combine(transfers) { state, transferTotal -> state.copy(transferMinor = transferTotal) }
         .combine(previousPeriod) { state, prev ->
             val prevSaved = prev.incomeMinor - prev.expenseMinor
             val savingsDeltaPercent = if (prevSaved != 0L) {

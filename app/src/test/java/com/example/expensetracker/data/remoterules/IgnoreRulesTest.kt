@@ -13,7 +13,7 @@ private const val DECLINED_SMS =
     "TXN DECLINED: Rs.500 on 29-09-26 at 19:00 on HDFC Bank Debit Card xx1234. " +
         "Reason: Online set Limit Exceeded. Modify:https://1.hdfc.bank.in/HDFCBK/s/a/E0WMgeP0"
 
-/** A real HDFC spend, worded so the built-in templates read it. */
+/** A real HDFC spend, worded so one of the published generic rules reads it. */
 private const val SPEND_SMS = "Rs 450.00 debited to swiggy@icici on 29-09-26. Ref 4432112. -HDFC Bank"
 
 class IgnoreRulesTest {
@@ -25,10 +25,17 @@ class IgnoreRulesTest {
         override suspend fun update(pattern: LearnedPatternEntity) = Unit
     }
 
-    /** Seeds the repository through its disk cache, which is loaded and compiled on construction. */
+    /**
+     * Seeds the repository through its disk cache, which is loaded and compiled on construction.
+     *
+     * The published generic rules go in alongside whatever the test adds: they're what reads an
+     * ordinary spend now that no templates ship in the app, so without them [SPEND_SMS] wouldn't
+     * parse and the "a real spend still parses" guard would pass for the wrong reason.
+     */
     private fun repositoryWith(ignoreRulesJson: String?, rulesJson: String = "[]"): RemoteRulesRepository {
+        val rules = TestRuleSets.rulesArray(TestRuleSets.GENERIC, extraRules = rulesJson)
         val cached = buildString {
-            append("""{"version":9,"updatedAt":"2026-09-29T00:00:00Z","discardSenders":[],"rules":$rulesJson""")
+            append("""{"version":9,"updatedAt":"2026-09-29T00:00:00Z","discardSenders":[],"rules":$rules""")
             if (ignoreRulesJson != null) append(""","ignoreRules":$ignoreRulesJson""")
             append("}")
         }

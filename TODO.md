@@ -10,7 +10,7 @@ The database is the user's **only** copy of their financial history, and nothing
 put it back. Today's whole answer is "Export all transactions to a local CSV" — transactions only,
 and there is no import, so it's a readable record rather than a restore path. Everything that
 isn't SMS-derived is unrecoverable: manually added transactions, hand-assigned categories, merchant
-rules, budgets, bills, the own-accounts setup behind self-transfer detection, learned patterns.
+rules, budgets, bills, learned patterns.
 (SMS-derived transactions can be rebuilt with Settings → Import SMS history, as long as the
 messages are still in the phone's inbox.)
 

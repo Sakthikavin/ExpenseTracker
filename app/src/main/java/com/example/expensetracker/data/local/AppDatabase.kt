@@ -12,7 +12,6 @@ import com.example.expensetracker.data.local.dao.BudgetDao
 import com.example.expensetracker.data.local.dao.CategoryDao
 import com.example.expensetracker.data.local.dao.LearnedPatternDao
 import com.example.expensetracker.data.local.dao.MerchantCategoryRuleDao
-import com.example.expensetracker.data.local.dao.OwnAccountDao
 import com.example.expensetracker.data.local.dao.RawSmsDao
 import com.example.expensetracker.data.local.dao.TransactionDao
 import com.example.expensetracker.data.local.entity.BillEntity
@@ -20,7 +19,6 @@ import com.example.expensetracker.data.local.entity.BudgetEntity
 import com.example.expensetracker.data.local.entity.CategoryEntity
 import com.example.expensetracker.data.local.entity.LearnedPatternEntity
 import com.example.expensetracker.data.local.entity.MerchantCategoryRuleEntity
-import com.example.expensetracker.data.local.entity.OwnAccountEntity
 import com.example.expensetracker.data.local.entity.RawSmsEntity
 import com.example.expensetracker.data.local.entity.TransactionEntity
 import com.example.expensetracker.data.local.entity.UNASSIGNED_CATEGORY_NAME
@@ -37,10 +35,9 @@ import kotlinx.coroutines.launch
         BillEntity::class,
         RawSmsEntity::class,
         LearnedPatternEntity::class,
-        OwnAccountEntity::class,
         MerchantCategoryRuleEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -51,7 +48,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun billDao(): BillDao
     abstract fun rawSmsDao(): RawSmsDao
     abstract fun learnedPatternDao(): LearnedPatternDao
-    abstract fun ownAccountDao(): OwnAccountDao
     abstract fun merchantCategoryRuleDao(): MerchantCategoryRuleDao
 
     companion object {
@@ -67,7 +63,7 @@ abstract class AppDatabase : RoomDatabase() {
                 .addCallback(SeedCallback(context.applicationContext))
                 .addMigrations(
                     MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
-                    MIGRATION_6_7,
+                    MIGRATION_6_7, MIGRATION_7_8,
                 )
                 .build()
 
@@ -214,6 +210,26 @@ abstract class AppDatabase : RoomDatabase() {
                         ),
                     )
                 }
+            }
+        }
+
+        /**
+         * v7 → v8: parsing moved to one published rule list, so the app no longer pairs transfers
+         * or tracks which accounts are the user's (`PARSING_ARCHITECTURE.md` §6).
+         *
+         * `own_accounts` goes, and every pairing made so far is undone. The columns stay: dropping
+         * one in SQLite means rebuilding the table, which isn't worth it for two nullable columns
+         * nothing reads any more.
+         *
+         * This changes what the user sees. A transfer between their own accounts was one row
+         * counting as neither spending nor income; its two legs are now an ordinary debit and an
+         * ordinary credit, so both totals rise for any month that had one. Nothing is deleted —
+         * both legs were always stored — so the rows can be removed by hand if it matters.
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("UPDATE transactions SET transferGroupId = NULL")
+                db.execSQL("DROP TABLE IF EXISTS own_accounts")
             }
         }
 

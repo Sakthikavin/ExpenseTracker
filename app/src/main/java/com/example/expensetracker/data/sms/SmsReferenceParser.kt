@@ -1,13 +1,12 @@
 package com.example.expensetracker.data.sms
 
 /**
- * Extracts the bank's own transaction reference from a message.
+ * Finds the bank's own transaction references in a message.
  *
- * Banks often send two SMS for one movement of money — a debit notification and a transfer
- * confirmation — and the only exact link between them is a shared reference. For an NPS
- * contribution, `HDFCH00842011992` appears buried in the debit's `Info:` blob and again as
- * `Txn No HDFCH00842011992` in the confirmation. Matching on it is what stops one payment being
- * recorded twice.
+ * Nothing stores them any more — a rule's `ref` group is validated and discarded
+ * (`PARSING_ARCHITECTURE.md` §2). What survives is the one use that doesn't need the value: a
+ * labelled reference is structure only a bank alert has, so its presence is one of the markers
+ * [hasBankAlertMarker] admits a message to the review queue on.
  */
 object SmsReferenceParser {
 
@@ -34,11 +33,7 @@ object SmsReferenceParser {
     /** Words that follow the labels above but are never the reference itself. */
     private val NOT_A_REFERENCE = setOf("NUMBER", "DETAILS", "BELOW", "ATTACHED")
 
-    /**
-     * @return every plausible reference in [body], upper-cased. A message can carry more than one
-     * (its own and a counterparty's), so callers should treat an intersection as a match rather
-     * than requiring equality.
-     */
+    /** @return every plausible reference in [body], upper-cased. */
     fun referencesIn(body: String): Set<String> {
         val found = LinkedHashSet<String>()
         LABELLED.findAll(body).mapTo(found) { it.groupValues[1].uppercase() }
@@ -47,12 +42,5 @@ object SmsReferenceParser {
         found.removeAll(NOT_A_REFERENCE)
         // A pure-digit run shorter than 8 is a card suffix or an amount, not a reference.
         return found.filterTo(LinkedHashSet()) { it.length >= 8 || it.any(Char::isLetter) }
-    }
-
-    /** The single best reference to store on a transaction: prefer the bank's own long token. */
-    fun primaryReference(body: String): String? {
-        val all = referencesIn(body)
-        return all.firstOrNull { it.any(Char::isLetter) && it.any(Char::isDigit) }
-            ?: all.firstOrNull()
     }
 }

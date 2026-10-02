@@ -1,0 +1,36 @@
+{
+  "rules": [
+    {
+      "id": "tmbank_debited_with_v1",
+      "senders": [
+        "TMBANK"
+      ],
+      "direction": "debit",
+      "pattern": "Your A/c No\\.XXXX(?<account>\\d+) is debited with Rs\\.(?<amount>[\\d,.]+) on (?<date>\\S+) \\S+(?: [AP]M)? and \\S+ A/c linked to (?<merchant>\\S+) is credited \\(UPI Ref No\\.(?<ref>\\w+)\\)\\.Current AVBL bal is (?:Rs\\.?|INR)?\\s*(?<balance>[\\d,.]+)",
+      "fieldMap": {
+        "balance": 6,
+        "amount": 2,
+        "merchant": 4,
+        "account": 1,
+        "date": 3,
+        "ref": 5
+      },
+      "priority": 10
+    },
+    {
+      "id": "tmbank_credit_v1",
+      "senders": [
+        "TMBANK"
+      ],
+      "direction": "credit",
+      "pattern": "Your A/c No\\.XXXX(?<account>\\d+) is credited with Rs\\.(?<amount>[\\d,.]+) on (?<date>\\S+) \\S+(?: [AP]M)? and \\S+ A/c linked to (?<merchant>\\S+) is debited \\(UPI Ref No\\.(?<ref>\\w+)\\)\\.Current AVBL bal is (?:Rs\\.?|INR)?\\s*(?<balance>[\\d,.]+)",
+      "fieldMap": {
+        "date": 3,
+        "merchant": 4,
+        "account": 1,
+        "amount": 2
+      },
+      "priority": 10
+    }
+  ]
+}

@@ -82,43 +82,29 @@ class RemoteRulesRepository(
      * Step 3 of `SmsParser.parse` (IGNORE_RULES.md §3): a published pattern saying this *kind* of
      * message from this sender isn't a transaction — a declined-payment alert, say.
      *
-     * Runs before any parsing tier, so a built-in template can't book the non-payment it describes.
-     * Any match is enough; no capture groups are read and order doesn't matter.
+     * Runs before [tryMatch], so a rule can't book the non-payment the message describes. Any match
+     * is enough; no capture groups are read and order doesn't matter.
      */
     fun isIgnoredMessage(sender: String, body: String): Boolean {
         val normalized = PatternLearner.normaliseSender(sender)
-        return compiledIgnores.any { normalized in it.rule.senders && it.regex.containsMatchIn(body) }
+        return compiledIgnores.any { it.rule.appliesTo(normalized) && it.regex.containsMatchIn(body) }
     }
 
     /**
-     * Reviewed, bank-specific rules — run *before* `BankTemplates.findMatch` (§5), because a
-     * generic template can read a message badly and still answer first, which leaves the rule
-     * written to fix exactly that message no chance to run.
+     * The whole of parsing (`PARSING_ARCHITECTURE.md` §2). Follows the console's exact prediction
+     * order (REQUIREMENTS.md §5.2): rules for this sender by `priority` descending (ties keep
+     * publish order), first rule that matches *and* fills every `fieldMap` group wins,
+     * non-compiling rules are already excluded from [compiled].
+     *
+     * There is no tier below this one: with no cached set — a fresh install before its first sync —
+     * nothing matches, and every financial-looking message waits in the review queue until a sync
+     * arrives and `reparseNeedsReview` walks it again.
      */
-    fun tryBankRules(sender: String, body: String): ParsedSms? =
-        tryMatch(sender, body) { it >= BANK_RULE_MIN_PRIORITY }
-
-    /**
-     * The console's generic `android_*` copies of the built-in templates, published at priority
-     * 1–4 — run *after* the templates, because the templates read more from the same message
-     * (self-transfer, counterparty institution, block formats) and a rule yields only amount,
-     * direction and merchant. They still catch what no template reads.
-     */
-    fun tryFallbackRules(sender: String, body: String): ParsedSms? =
-        tryMatch(sender, body) { it < BANK_RULE_MIN_PRIORITY }
-
-    /**
-     * Tier 2 of `SmsParser.parse` (§5). Follows the console's exact prediction order (§5.2): rules
-     * for this sender by `priority` descending (ties keep publish order), first rule that matches
-     * *and* fills every `fieldMap` group wins, non-compiling rules are already excluded from
-     * [compiled]. Splitting the walk by priority doesn't change that order — it only decides which
-     * side of the templates each half runs on.
-     */
-    private fun tryMatch(sender: String, body: String, priority: (Int) -> Boolean): ParsedSms? {
+    fun tryMatch(sender: String, body: String): ParsedSms? {
         if (isDiscardedSender(sender)) return null
         val normalized = PatternLearner.normaliseSender(sender)
         return compiled
-            .filter { normalized in it.rule.senders && priority(it.rule.priority) }
+            .filter { it.rule.appliesTo(normalized) }
             .sortedByDescending { it.rule.priority }
             .firstNotNullOfOrNull { applyRule(it, body) }
     }
@@ -130,11 +116,14 @@ class RemoteRulesRepository(
             match.groupValues.getOrNull(group)?.takeIf { it.isNotEmpty() } ?: return null
         }
         val amountMinor = values["amount"]?.let(::parseAmountToMinorUnits) ?: return null
-        val merchant = values["merchant"]?.trim().orEmpty()
+        // `date`, `ref` and `balance` stay valid fieldMap names and still have to be non-empty —
+        // a rule that matched the wrong span usually leaves one blank — but their values aren't
+        // stored. The date comes from the whole message instead, since most rules don't map one.
         return ParsedSms(
             amountMinor = amountMinor,
             direction = candidate.rule.direction,
-            merchant = merchant,
+            merchant = values["merchant"]?.trim().orEmpty(),
+            accountLabel = values["account"]?.trim().orEmpty(),
             occurredAt = SmsDateParser.parse(body),
         )
     }
@@ -228,17 +217,9 @@ class RemoteRulesRepository(
 
     private fun JSONArray.toStringList(): List<String> = (0 until length()).map { getString(it) }
 
-    companion object {
-        /**
-         * The line between a reviewed, bank-specific rule and a generic fallback. Priorities 1–4
-         * are reserved for the console's `android_*` copies of the built-in templates — a console
-         * convention, recorded in both repositories' REQUIREMENTS.md §5. A bank rule published
-         * below this by mistake loses to the templates, which is the pre-existing behaviour.
-         */
-        const val BANK_RULE_MIN_PRIORITY = 5
-
-        private const val PREF_CACHED_RULE_SET = "remote_rules_cached_set"
-        private const val PREF_LAST_CHECKED_AT = "remote_rules_last_checked_at"
-        private const val ONE_DAY_MILLIS = 24L * 60 * 60 * 1000
+    private companion object {
+        const val PREF_CACHED_RULE_SET = "remote_rules_cached_set"
+        const val PREF_LAST_CHECKED_AT = "remote_rules_last_checked_at"
+        const val ONE_DAY_MILLIS = 24L * 60 * 60 * 1000
     }
 }

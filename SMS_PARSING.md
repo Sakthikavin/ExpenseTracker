@@ -12,60 +12,73 @@ Related docs:
 
 ---
 
-## 1. The three outcomes
+## 1. The outcomes
 
-Every message that reaches the app ends in exactly one of three states, decided by
-[SmsParser.parse()](app/src/main/java/com/example/expensetracker/data/sms/SmsParser.kt#L8-L16).
+Every message that reaches the app ends in exactly one of these, decided by
+[SmsParser.parse()](app/src/main/java/com/example/expensetracker/data/sms/SmsParser.kt).
 
 | Outcome | `raw_sms` row | `transactions` row | User sees |
 | --- | --- | --- | --- |
 | `Parsed` | yes, `parseStatus = PARSED` | yes, created automatically | the transaction, immediately |
 | `NeedsReview` | yes, `parseStatus = NEEDS_REVIEW` | no — not yet | an entry in the Review tab |
-| `Ignored` | **none** | no | nothing; the message is discarded |
+| `IgnoredAsNoise` | yes, `parseStatus = IGNORED` | no | nothing, but it stays auditable |
+| `Discarded` | yes, `parseStatus = DISCARDED`, capped at the newest 200 | no | Settings → "Messages I skipped" |
+| `Ignored` | **none** | no | nothing; the message is dropped outright |
 
-`Ignored` writes nothing at all. The `ParseStatus.IGNORED` enum value exists in
-[RawSmsEntity.kt:7](app/src/main/java/com/example/expensetracker/data/local/entity/RawSmsEntity.kt#L7)
-but is never assigned — if you ever want an audit trail of discarded messages, that is the hook.
+The line between the last two is whether the message mentions money at all. Something that mentions
+an amount and was still turned away is kept, because that's how a mistake in the heuristic becomes
+findable — a Canara alert writing `Dr.` instead of "debited" once went missing with no trace
+anywhere. Something that mentions no money (an OTP, a delivery notification, a personal text) is
+dropped, which is what stops the skipped list becoming a second copy of the inbox.
 
 ---
 
-## 2. Tier 1 — the built-in regex
+## 2. The published rule list
 
-[BankTemplates.kt](app/src/main/java/com/example/expensetracker/data/sms/BankTemplates.kt) holds six
-templates (HDFC, SBI, ICICI, Axis, Kotak, Generic UPI), but all six are `GenericBankTemplate` and all
-six delegate to the same `extractGeneric`. **The sender does not currently influence parsing at all** —
-the `Generic UPI` entry is registered with the sender hint `""`, and `"anything".contains("")` is
-always `true`, so every sender reaches the same two regexes.
+**The app ships no rules and no built-in templates.** Everything that turns an SMS into a
+transaction is published from the rules console and arrives by sync, cached on the device
+(`data/remoterules/PARSING_ARCHITECTURE.md`). A bank changing its wording is a rule edit, not an app
+release — and on a phone that has never synced, nothing parses at all and every financial-looking
+message waits in the review queue until the first sync re-reads it.
 
-`extractGeneric` tries debit first, then credit. Real banks put the amount on **either** side of the
-verb, so each direction has two regexes, built from shared fragments by `directionRegexes`:
+A rule is matched against the raw message body and yields exactly five things: amount, direction,
+merchant, the account label if it captures one, and the date (read from the whole message by
+`SmsDateParser`). Rules are tried for this sender by `priority`, highest first.
 
-```
-form A — amount first    "Rs 450.00 debited to swiggy@icici"     (HDFC, ICICI)
-form B — verb first      "Debited Rs 1.00 ... to KEERTHANA KU"   (Federal, SBI)
-```
+Two kinds, and the distinction is only priority:
 
-Decomposed, using the debit direction:
+- **Bank rules** (priority 10 and up) — written for one sender against its real messages. These are
+  where accuracy comes from, and the only rules that fill the account label.
+- **Generic rules** (priority 6 down to 1, `senders: ["*"]`) — the seven that used to be the app's
+  built-in templates, including the two that read multi-line "block" alerts. They apply to every
+  sender and catch the common Indian bank/UPI shapes.
+
+The generic debit rule, decomposed — this is the published pattern, not a paraphrase:
 
 ```
 (?i)                                  case-insensitive
 (?:rs\.?|inr)\s*                      currency prefix: "Rs", "Rs.", "INR"
-([\d,]+(?:\.\d{1,2})?)                GROUP 1 — amount: 450, 1,250.50
+(?<amount>\d[\d,]*(?:\.\d{1,2})?)     amount: 450, 1,250.50
 \s+(?:has\s+been\s+)?                 optional passive filler
-(?:debited|debit|spent|paid|withdrawn)    the verb   (credit: credited|received)
+(?:debited|debit|spent|paid|withdrawn|sent|transferred)
 .*?                                   lazy skip over account number, card name, etc.
-\b(?:towards|to|at|from)\s+           the preposition   (credit: from|by)
-(?!a/c\b|ac\b|account\b)              guard — never treat the source account as the payee
-([A-Za-z0-9@._\-\s]{2,40}?)           GROUP 2 — merchant, lazy, 2–40 chars
-(?:\s+on\b|\s+ref\b|\s+via\b|[.,]|$)  stop marker
+\b(?:towards|to|at|from)\s+           the preposition   (credit: from|by|to)
+(?!(?:your\s+)?(?:a/c|ac|account|card)\b)   guard — never the source account
+(?:vpa\s+)?                           skip the label, keep the handle
+(?<merchant>[A-Za-z0-9@._/\-\s]{2,40}?)
+(?:\s+on\b|\s+ref\b|\s+via\b|\s+no\b|[.,](?![\w.\-]*@)|$)   stop marker
 ```
 
-Form B is the same with the verb and amount swapped, plus an optional connector so that both
+The verb-first rule is the same with the verb and amount swapped, plus an optional connector so both
 `Debited Rs 1.00` and `debited by Rs.320.00` are covered.
 
-Three details carry most of the weight:
+Four details carry most of the weight:
 
-- **the stop marker** keeps the lazy merchant group from swallowing the rest of the line;
+- **the stop marker** keeps the lazy merchant group from swallowing the rest of the line — and its
+  `[.,](?![\w.\-]*@)` means a dot *inside a handle* no longer ends the name, so
+  `landlord.ravi@ybl` stays whole instead of becoming `VPA landlord`;
+- **`\s+no\b` as a stop** ends the merchant before a trailing reference, so
+  `VPA kumarstores@okaxis No 427381920113` reads as `kumarstores@okaxis`;
 - **the `a/c` guard** matters whenever `from` is a valid preposition — in
   `Debited Rs 1.00 from a/c X6686 ... to KEERTHANA KU`, the account offers itself as the merchant
   first, and without the lookahead it would win and the real payee would be lost;
@@ -87,7 +100,7 @@ Three details carry most of the weight:
    → DEBIT  ₹250.00   merchant "ELECTRICITY BILL"
 
 ✅ INR 350 debited from a/c XX99 to VPA merchant@ybl on 02Aug26
-   → DEBIT  ₹350.00   merchant "VPA merchant@ybl"
+   → DEBIT  ₹350.00   merchant "merchant@ybl"      (the "VPA" label is skipped)
 
 ✅ Rs 5000 credited from RAHUL SHARMA on 01-08-26. Avl bal Rs 21000
    → CREDIT ₹5000.00  merchant "RAHUL SHARMA"
@@ -111,11 +124,11 @@ Three details carry most of the weight:
 
 ### Multi-line "block" alerts
 
-Many banks put each fact on its own line. The single-line regexes cannot reach these, because `.`
-does not match a newline in Kotlin — and simply switching that on would be worse than useless: in the
-Axis alert below, the first `to` reachable across lines belongs to `WhatsApp BAL to 917036165000`, so
-the payee would become a phone number. `BlockFormat` reads the lines structurally instead, keeping
-each fact bound to the line that states it.
+Many banks put each fact on its own line, and a single-line pattern can't reach them. Letting `.`
+cross newlines would be worse than useless: in the Axis alert below, the first `to` reachable across
+lines belongs to `WhatsApp BAL to 917036165000`, so the payee would become a phone number. The three
+block rules use `(?im)` with `^…$` per line instead, which binds each fact to the line that states
+it — `To` has to *start* a line to be the payee.
 
 ```
 ✅ Sent Rs.58.00                        ✅ Debit INR 292.00
@@ -126,9 +139,10 @@ each fact bound to the line that states it.
 
    → DEBIT ₹58.00                          → DEBIT ₹292.00
      merchant "Google India Digital Serv"    merchant "APY"
-     account  "*3941"                        account  "XX4795"
-     ref      119088866187
 ```
+
+Neither fills an account label: no generic rule captures one, so that field stays blank unless a
+bank rule for the sender maps it.
 
 The payee comes from the `To` line, never the `From` line. When there is no payee line at all — an
 auto-debit mandate names only its scheme — the leading token of a reference line (`APY/…` for Atal
@@ -136,12 +150,13 @@ Pension Yojana, `NACH/…`, `ACH/…`) is used instead.
 
 ### Merchant vs. the account the money left
 
-`debited from HDFC Bank XX3941` offers the *source account* where a payee should be. Candidates are
-rejected when they contain masked digits (`XX3941`, `*3941`), carry no letters at all (phone numbers,
-reference digits), or are a bare institution name (`HDFC Bank`).
+`debited from HDFC Bank XX3941` offers the *source account* where a payee should be. The generic
+rules refuse `a/c`, `ac`, `account`, `card` and `your a/c` outright — but the guard is a prefix
+check, not a judgement, so `from HDFC Bank XX3941` still reads as a merchant named
+"HDFC Bank XX3941".
 
-When the payee is rejected and the message is a NEFT-style alert, the purpose is recovered from the
-trailing narration:
+That's the one place the move to published rules cost accuracy. The app used to recover the real
+purpose from a NEFT narration:
 
 ```
 Info: NEFT Dr-UTIB0CCH274-SAKTHI KAVIN S S-SANDOZ - MUM-HDFCH00842011992-NET BANKING SI -NPS Contribution M.
@@ -149,8 +164,8 @@ Info: NEFT Dr-UTIB0CCH274-SAKTHI KAVIN S S-SANDOZ - MUM-HDFCH00842011992-NET BAN
 → merchant "NPS Contribution"
 ```
 
-Banks and beneficiary names are written in block capitals; the purpose a human typed keeps its mixed
-case, which is what makes it findable in that soup.
+That guesser is gone, and reading a narration like this is a bank rule's job now — a HDFCBK rule can
+capture the same span, and until one is published the merchant reads "HDFC Bank XX3941".
 
 ### What does not
 
@@ -166,23 +181,30 @@ Anything whose verb isn't in the list, or where the amount and verb aren't adjac
 
 Both fall through to the review queue rather than being lost.
 
-> These examples are asserted in
-> [BankTemplatesTest.kt](app/src/test/java/com/example/expensetracker/data/sms/BankTemplatesTest.kt).
-> When a new bank format shows up, add it to that corpus first, then change the regex.
+> The corpus these are checked against is
+> [RealMessageTest.kt](app/src/test/java/com/example/expensetracker/data/sms/RealMessageTest.kt),
+> which runs the **real published rules** — `src/test/resources/generic-rules.json` is a copy of what
+> the console publishes, so an expectation here is evidence rather than a regex written to pass.
+> When a new bank format shows up, add the message to `RealMessages` first and watch it fail; the fix
+> is then a rule on the console, and a refreshed copy of the file.
 
 ### Amounts are integer paise
 
-[`parseAmountToMinorUnits`](app/src/main/java/com/example/expensetracker/data/sms/ParsedSms.kt#L18-L22)
-strips commas, parses to `Double`, multiplies by 100 and rounds: `"1,250.50"` → `125050`. The `Double`
-exists only for the length of that expression; nothing downstream stores money as a float.
+[`parseAmountToMinorUnits`](app/src/main/java/com/example/expensetracker/data/sms/ParsedSms.kt)
+strips commas and converts through `BigDecimal`: `"1,250.50"` → `125050`. Never `Double` — the
+conversion is exact at any magnitude instead of relying on a rounding step — and it returns null on
+anything unreadable, so a rule whose amount group caught something odd falls through instead of
+storing a wrong number.
 
 ---
 
-## 3. Tier 2 — learned patterns
+## 3. Learned patterns — the per-device fallback
 
-If tier 1 misses, the parser looks up every pattern learned for that sender and tries each in turn,
+If no rule reads the message, the parser looks up every pattern learned for that sender and tries each in turn,
 most-confirmed first ([SmsParser.kt](app/src/main/java/com/example/expensetracker/data/sms/SmsParser.kt)).
 A sender legitimately needs more than one — a debit alert and a credit alert are worded differently.
+Rules come first: a rule was reviewed against real samples and reaches every phone, while a learned
+pattern is a guess this device made from a single confirmation.
 
 The lookup key is **normalised**, not the raw sender string. Indian sender IDs carry a rotating
 operator/circle prefix, so `AD-FEDBNK`, `VM-FEDBNK` and `JD-FEDBNK-S` are all the same bank;
@@ -196,31 +218,48 @@ How a pattern gets created is covered in [§5](#5-the-learning-loop).
 
 ---
 
-## 4. Tier 3 — the "is this even financial?" heuristic
+## 4. The review-queue heuristic
 
-```kotlin
-fun looksFinancial(body: String): Boolean =
-    AMOUNT_HINT.containsMatchIn(body) && TRANSACTIONAL_KEYWORD_HINT.containsMatchIn(body)
+The last question, and the only message-reading the app still does itself
+([ReviewHeuristics.kt](app/src/main/java/com/example/expensetracker/data/sms/ReviewHeuristics.kt)).
+It extracts nothing — it only decides whether an unmatched message is worth a person's attention.
+
+An amount is required either way, and then there are two ways to qualify:
+
+- **a transactional verb** — `debited|credited|debit|credit|spent|paid|received|withdrawn|purchase|sent|transferred|transfer`
+- **or the *shape* of a bank alert** — a masked account, an account label, a balance, a UPI handle or
+  a labelled reference — **plus an amount that isn't the balance**
+
+The second route is what a closed list of verbs couldn't do. Canara writes `Dr.`/`Cr.`, an ATM writes
+`W/D`; before this, such a message was dropped with no row at all, so exactly the messages most in
+need of a rule could never ask for one. Requiring an amount that survives having the balance
+stripped out is what still keeps a bare balance enquiry out: a balance enquiry's only amount *is* its
+balance.
+
+```
+⚠️ Acct XXX167 Dr. INR 26.00 on 29/09/26 to Euronet Serv; Bal INR 49,511.88
+      queued — no verb, but a masked account, a balance, and ₹26.00 that isn't the balance
+
+⚠️ Purchase of Rs 599.00 on your ICICI Card XX12 at NETFLIX.COM. Avl Lmt Rs 45000
+      queued — "purchase" is a review keyword but no rule reads this shape
+
+🗑 Reminder: your order of Rs 1,299 is out for delivery.
+      skipped — mentions money, carries no bank-alert structure; kept where you can see it
+
+🗑 Dear customer, your a/c balance is Rs 15,000.00
+      skipped — its only amount is the balance
+
+❌ Your OTP is 445566. Do not share.                        no amount at all; no row
+❌ Get 50% off! Spend Rs 999 and get Rs 200 cashback.       "Spend" ≠ "spent", no alert structure
 ```
 
-Both conditions must hold:
+Over-admission is corrected from the console with an ignore rule, not an app release
+(`data/remoterules/IGNORE_RULES.md`). Under-admission lands in the skipped list, where it can still
+be found and moved to review by hand.
 
-- **an amount** — `(?:rs\.?|inr)\s*[\d,]+`
-- **a keyword** — `debited|credited|debit|credit|spent|paid|received|withdrawn|purchase`
-
-True → `NeedsReview`. False → `Ignored`.
-
-```
-⚠️ EMI of Rs 4,500 will be debited to your loan account on 05-08-26
-      queued — note it is a *future* debit, but nothing distinguishes tense
-
-❌ Your OTP is 445566. Do not share.                       no amount
-❌ Dear customer, your a/c balance is Rs 15,000.00         amount, but "balance" isn't a keyword
-❌ Get 50% off! Spend Rs 999 and get Rs 200 cashback.      "Spend" ≠ "spent"
-```
-
-That last one is filtered by luck rather than design. A promotional message using any listed keyword
-in past tense would land in the review queue.
+A floor also applies on this path only: an amount under ₹2 (configurable in Settings) is treated as a
+verification ping rather than spending. A rule's match is never floored — a ₹1 UPI payment a rule
+read is a real payment.
 
 ---
 
@@ -282,7 +321,7 @@ position a capture group can reach. A confirmed salary credit therefore replays 
 
 ---
 
-## 5b. One payment, two messages
+## 5b. One payment, two messages — and self-transfers
 
 Banks routinely send two SMS for a single transfer. An NPS contribution produces both of these:
 
@@ -294,89 +333,33 @@ HDFC Bank : NEFT money transfer Txn No HDFCH00842011992 for Rs INR 5,000.00
 has been credited to SAKTHI KAVIN S S on 05-03-2026 at 04:01:54
 ```
 
-₹5,000 moved once. Recorded naively that is a ₹5,000 expense *and* ₹5,000 of income.
+₹5,000 moved once, and the app now records **two** transactions — a ₹5,000 debit and a ₹5,000
+credit. That is deliberate (`data/remoterules/PARSING_ARCHITECTURE.md` §7). It used to match the
+shared reference `HDFCH00842011992` and merge them, and separately to pair the two legs of a
+transfer between your own accounts under a `transferGroupId` so that neither counted as spending or
+income. Both mechanisms are gone, along with the "My accounts" screen that fed the second one.
 
-**The exact link is the shared reference** `HDFCH00842011992` — unlabelled in the first message,
-labelled `Txn No` in the second. `SmsReferenceParser` pulls both labelled references (`Ref`, `UTR`,
-`Txn No`) and unlabelled bank tokens (a short alphabetic prefix followed by 10+ digits, which is what
-keeps the IFSC `UTIB0CCH274` out of the results).
+What replaces them is console-side and explicit:
 
-`SmsRepository.reconcileWithExisting` then:
+- **two alerts for one payment** (the bank's and a UPI app's): discard the app's sender, or publish
+  an ignore rule for its wording;
+- **a transfer to your own account**: an ignore rule on its wording. Published rules reach every
+  phone and the rules document is publicly readable, so an account number must never appear in a
+  pattern.
 
-1. looks for a stored SMS transaction with the same `referenceId`;
-2. failing that, looks for the same amount, on the same day, in the opposite direction;
-3. if either hits, links the new raw SMS to the **existing** transaction and creates nothing new.
+Why it went: three layers each read the same message, and the two that ran *after* a match — the
+reference matching and the transfer pairing — were invisible to the console. A rule author could see
+that a rule read a message but not that the app then merged it into another row. Guessing less, and
+saying so, beat guessing well in a place nobody could inspect.
 
-The surviving row is always the **debit** — the money left the account, so that is the truthful
-record — regardless of which message arrived first. Both raw messages stay in `raw_sms`, both
-pointing at the one transaction, so nothing is lost for audit.
+One duplicate check survives, because it guesses nothing: `findExactBodyResend` matches a
+**byte-identical** body from the same sender and links the new row to the existing transaction. The
+unique index on `raw_sms(sender, body, receivedAt)` already rejects a redelivery carrying the same
+timestamp; this catches the one that arrives later.
 
-Rule 2 is deliberately narrow. Same amount, same day, opposite direction is *also* exactly what a
-refund looks like, so it only applies when the message reads like a bank transfer (`NEFT`, `IMPS`,
-`RTGS`, `UPI`, `money transfer`). Without that guard a same-day refund would be swallowed into the
-purchase it reversed — which
-[`aSameDayRefundIsNotMergedIntoThePurchase`](app/src/androidTest/java/com/example/expensetracker/data/repository/SmsRepositoryTest.kt)
-exists to prevent.
-
-> Two identical messages carrying the same reference are the same payment however far apart they
-> arrive. Two *different* payments never share a bank reference.
-
----
-
-## 5c. Transfers between your own accounts
-
-Moving ₹10,000 from HDFC to ICICI produces two messages, and **both legs are real** — each account's
-balance genuinely changed. Together, though, they are neither spending nor income: the money never
-left your control.
-
-This is the opposite treatment from [§5b](#5b-one-payment-two-messages), and the distinction matters:
-
-| | NPS pair | Self-transfer |
-| --- | --- | --- |
-| What happened | one event, reported twice by one bank | one event, two real legs in two accounts |
-| Accounts named | one (or none on the second message) | two, and they differ |
-| Handling | **merge** — keep one row | **pair** — keep both, link them |
-| Why | the second row is noise | dropping a leg would corrupt an account's history |
-
-`SmsRepository` tells them apart on exactly that signal: if both messages name an account and the
-names differ, it refuses to merge and leaves them for `TransferMatcher` to pair. One bank describing
-a single event twice never names two different accounts.
-
-### How a pair is recognised
-
-`TransferMatcher` considers only opposite-direction transactions within 72 hours whose amounts differ
-by at most ₹25 — the tolerance covers IMPS fees, where ₹10,005 leaves and ₹10,000 arrives. Among
-those it links **automatically** when any of:
-
-1. the two share a bank reference (a UTR appearing in both messages — proof, not inference);
-2. both account labels are ones you've claimed on **My accounts**;
-3. the debit named a destination account you've claimed.
-
-Anything weaker is only *suggested*, never linked silently.
-
-### My accounts
-
-The parser already extracts `XX3941`, `*3941`, `XX4795` from your messages, so the screen is a list
-of toggles rather than a form asking for account numbers — mark which are yours, optionally name
-them ("HDFC Savings"). That registry is what makes rule 2 work for transfers with no shared UTR.
-
-### What you see
-
-Both legs stay in the database, linked by `transferGroupId`, and collapse into one row:
-
-```
-2 Aug 2026    ⇄ Transfer · XX3941 → XX4795          ₹10,000.00
-              Not counted as spending
-```
-
-Neither leg counts toward spend, income, or budgets. The dashboard states the amount separately —
-*"Plus ₹10,000.00 moved between your own accounts, not counted as income or expense"* — because
-money that silently disappears from a total is worse than money counted wrongly.
-
-**Marking one by hand:** the ⋮ menu on any transaction offers *Mark as transfer*, listing nearby
-opposite-direction transactions closest-amount-first. *No matching message* covers the case where
-only one bank sent an alert. *Not a transfer* on a paired row unlinks both legs, and they start
-counting again immediately.
+**Upgrading:** `MIGRATION_7_8` drops `own_accounts` and clears every `transferGroupId`, so months
+that contained a paired transfer now report both more spending and more income. Nothing is deleted —
+both legs were always stored — so a leg can be removed by hand if it matters.
 
 ---
 
@@ -411,73 +394,81 @@ Sender `AD-ICICIB`, body `Purchase of Rs 599.00 on your ICICI Card XX12 at NETFL
 | 6 | `observeByStatus` is a `Flow`, so the Review tab updates instantly |
 | 7 | user confirms → transaction created, row → `PARSED`, `derive` runs (see §5) |
 
-### Path C — ignored
+### Path C — skipped, and dropped
 
-Body `Dear customer, your a/c balance is Rs 15,000.00 as on 02-08-26` — amount present, no
-transactional keyword → `Ignored` → nothing written.
+Body `Dear customer, your a/c balance is Rs 15,000.00 as on 02-08-26` — an amount, but its only
+amount is the balance → `Discarded` → a `raw_sms` row under `DISCARDED`, listed in Settings →
+"Messages I skipped", no transaction.
+
+Body `Your OTP is 445566. Do not share.` — no amount at all → `Ignored` → nothing written anywhere.
 
 ---
 
 ## 7. Status and remaining limits
 
-The eight gaps this document originally listed have all been closed, each with a test that fails if
-it regresses:
+The gaps this document originally listed have all been closed, each with a test that fails if it
+regresses. Where a row's proof used to be `BankTemplatesTest`, the behaviour now lives in a published
+rule and the proof is `RealMessageTest` running the real rule set.
 
 | Was | Now | Proof |
 | --- | --- | --- |
 | Learned patterns froze dates and balances | `generaliseLiteral` turns volatile spans into wildcards | `PatternLearnerTest` |
-| Verb-first phrasing and `spent`/`paid`/`withdrawn` didn't parse | both orderings, five debit verbs | `BankTemplatesTest` |
+| Verb-first phrasing and `spent`/`paid`/`withdrawn` didn't parse | both orderings, seven debit verbs | `RealMessageTest` |
 | Learned patterns always replayed as `DEBIT` | direction stored per pattern (schema v2) | `PatternLearnerTest` |
 | Auto-parsed rows had no `linkedTransactionId` | written back after the transaction is created | `SmsRepositoryTest` |
-| No deduplication | unique index on `(sender, body, receivedAt)` | `SmsRepositoryTest`, `MigrationTest` |
+| No deduplication | unique index on `(sender, body, receivedAt)`, plus the body-match resend guard | `SmsRepositoryTest`, `MigrationTest` |
 | `occurredAt` was `Clock.System.now()` | the message's own date, else its receipt time | `SmsRepositoryTest` |
-| Sender allowlist was dead code | real routing, 16 senders, explicit fallback | `BankTemplatesTest` |
-| `parseAmountToMinorUnits` could throw | returns null; `BigDecimal` instead of `Double` | `BankTemplatesTest` |
-| Multi-line alerts couldn't parse at all | `BlockFormat` reads them line by line | `RealMessageTest` |
-| `Sent …` was silently discarded — not even queued | `sent`/`transferred` are parse verbs *and* review keywords | `RealMessageTest` |
-| The source account was taken as the merchant | account-shaped candidates rejected; NEFT purpose recovered from the narration | `RealMessageTest` |
-| One transfer was recorded as two transactions | shared-reference matching, then a narrow amount/date fallback | `SmsRepositoryTest` |
-| Self-transfers counted as spending *and* income | both legs paired via `transferGroupId`, excluded from all totals | `TransferMatcherTest`, `SmsRepositoryTest` |
-| `IMPS/<utr>/<bank>` references weren't extracted | rail-prefixed references recognised | `RealMessageTest` |
-| "to &lt;my own account&gt;" failed to parse at all | resolves to the destination institution, with the account captured | `RealMessageTest` |
+| `parseAmountToMinorUnits` could throw | returns null; `BigDecimal` instead of `Double` | `RealMessageTest` |
+| Multi-line alerts couldn't parse at all | three published block rules read them line by line | `RealMessageTest` |
+| `Sent …` was silently discarded — not even queued | `sent`/`transferred` are rule verbs *and* review keywords | `RealMessageTest` |
+| A message no verb matched left no row at all | kept as `DISCARDED` and listed under "Messages I skipped" | `SmsRepositoryTest`, `SmsParserRoutingTest` |
+| A merchant stopped at the dot inside a UPI handle | the stop marker ignores a dot followed by a handle | `RealMessageTest` |
+| `IMPS/<utr>/<bank>` references weren't extracted | rail-prefixed references recognised (as an alert marker) | `RealMessageTest` |
+| A bank's wording change needed an app release | it needs a rule published from the console | `RemoteRulesRepositoryTest` |
 
 ### What still limits accuracy
 
 These are design limits rather than defects — worth knowing before trusting the numbers:
 
-- **Tense is not modelled.** `EMI of Rs 4,500 will be debited on 05-08-26` queues for review like any
-  other message; nothing marks it as an announcement of a future debit.
-- **The review heuristic is keyword-based**, so a promotional message written in the past tense
-  ("you paid too much for…") will reach the queue. It cannot create a transaction on its own, so the
-  cost is noise, not wrong data.
-- **Deduplication has two layers.** A redelivered broadcast is caught by the unique
-  `(sender, body, receivedAt)` index; two *different* messages about one payment are caught by the
-  shared bank reference. The amount/date fallback only fires on transfer wording, so a refund
-  survives as its own transaction.
-- **A message with no reference and no transfer wording can still double-count** if a bank ever
-  sends two differently-worded alerts for one payment without a shared reference. Nothing in the
-  current corpus does this.
-- **Merchant quality varies by format.** A UPI alert names the payee outright; a NEFT alert only
-  carries a free-text narration, so `NPS Contribution` is a best-effort read of a field banks do not
-  structure.
+- **Nothing parses before the first sync.** A fresh install holds no rules, so every financial-looking
+  message waits in the review queue until a sync arrives and `reparseNeedsReview` re-reads it. Import
+  SMS history syncs first for this reason, and says so if it couldn't.
+- **One payment reported twice is two transactions.** Two *different* messages about the same money —
+  the bank's alert and a UPI app's, or a debit and its NEFT confirmation — both become rows. Fixing
+  it is a console action (a discarded sender or an ignore rule), not something the device guesses.
+  A redelivery of the *same* message is still collapsed.
+- **Self-transfers count as both spending and income.** Moving ₹10,000 between your own accounts
+  produces a ₹10,000 debit and a ₹10,000 credit, and both land in the totals.
+- **The account label is often blank.** Only a bank rule that maps an `account` group fills it; none
+  of the generic rules do.
+- **Merchant quality varies by format and by whether a bank rule exists.** A UPI alert names the payee
+  outright. A NEFT alert carries only a free-text narration, and with no bank rule for that sender the
+  generic rule reads the source account instead ("HDFC Bank XX3941"). Eight of the published bank
+  rules capture no merchant at all, which shows as "(no merchant)".
+- **Tense is not modelled beyond a filter.** A future-tense notice with no past-tense confirmation is
+  turned away as noise; anything subtler queues for review like any other message.
+- **The review heuristic admits by structure as well as keywords**, so a promotion that quotes an
+  amount and happens to carry a reference-shaped token can reach the queue. It cannot create a
+  transaction on its own, so the cost is noise, not wrong data — and an ignore rule removes it.
 - **A learned pattern is only as good as the message it came from.** Generalisation covers dates,
-  times, reference numbers and balances; a bank that varies its wording in some other way will need
-  a second confirmation, which the learner now accepts (it stores an additional pattern rather than
+  times, reference numbers and balances; a bank that varies its wording in some other way needs a
+  second confirmation, which the learner accepts (it stores an additional pattern rather than
   refusing).
-- **`Direction` for tier-1 matches comes from the verb**, so an unusual construction could in
-  principle mislabel one. Nothing in the current corpus does.
 
 ### Schema note
 
 - **v2** added `learned_patterns.direction` and the unique dedup index on `raw_sms`.
   `MIGRATION_1_2` deletes pre-existing duplicate rows *before* creating that index, because
   `CREATE UNIQUE INDEX` fails outright on a table that already violates it.
-- **v3** added `transactions.referenceId` and its (non-unique) index. `MIGRATION_2_3` is a plain
-  column addition; existing rows get `NULL`, which is correct — they predate reference capture.
-- **v4** added `transactions.transferGroupId` and the `own_accounts` table. `MIGRATION_3_4` adds
-  both; existing rows are not transfers, which is the right default.
+- **v3** added `transactions.referenceId`, **v4** `transactions.transferGroupId` and the
+  `own_accounts` table, **v5** the merchant-category rules table, **v6** `raw_sms.submittedAt`.
+- **v7** added eleven categories by migration, because the seed callback only runs when the database
+  is created and would never reach an existing install.
+- **v8** dropped `own_accounts` and cleared every `transferGroupId`. The two columns stay: dropping a
+  column in SQLite means rebuilding the table, which isn't worth it for two nullable columns nothing
+  reads.
 
 There is no destructive fallback anywhere in `AppDatabase`: the database is the user's only copy of
-their transactions. Both migrations, and the 1 → 3 path a phone on the original release actually
+their transactions. Every migration, and the multi-step paths a phone on an older release actually
 takes, are covered by
 [MigrationTest](app/src/androidTest/java/com/example/expensetracker/data/local/MigrationTest.kt).

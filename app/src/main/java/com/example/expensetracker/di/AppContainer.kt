@@ -13,7 +13,6 @@ import com.example.expensetracker.data.repository.CategoryRepository
 import com.example.expensetracker.data.repository.MerchantCategoryRuleRepository
 import com.example.expensetracker.data.repository.SmsRepository
 import com.example.expensetracker.data.repository.TransactionRepository
-import com.example.expensetracker.data.repository.TransferRepository
 import com.example.expensetracker.data.sms.SmsParser
 
 /**
@@ -30,12 +29,6 @@ class AppContainer(context: Context) {
     val transactionRepository = TransactionRepository(database.transactionDao())
     val budgetRepository = BudgetRepository(database.budgetDao())
     val billRepository = BillRepository(database.billDao())
-
-    val transferRepository = TransferRepository(
-        transactionDao = database.transactionDao(),
-        ownAccountDao = database.ownAccountDao(),
-        categoryDao = database.categoryDao(),
-    )
 
     val merchantCategoryRuleRepository = MerchantCategoryRuleRepository(
         ruleDao = database.merchantCategoryRuleDao(),
@@ -68,7 +61,6 @@ class AppContainer(context: Context) {
         learnedPatternDao = database.learnedPatternDao(),
         transactionRepository = transactionRepository,
         parser = smsParser,
-        transferRepository = transferRepository,
         merchantCategoryRuleRepository = merchantCategoryRuleRepository,
     )
 

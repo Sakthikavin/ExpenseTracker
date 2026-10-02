@@ -34,6 +34,11 @@ data class ImportProgress(
     val ignored: Int = 0,
     /** Mentioned money but matched nothing — the rows "Messages I skipped" lists. */
     val skipped: Int = 0,
+    /**
+     * Set when the import ran with no rules available at all, which means nothing could be parsed
+     * and every financial-looking message went to review. The next successful sync re-reads them.
+     */
+    val ranWithoutRules: Boolean = false,
 )
 
 /** Live state of the "Rule updates" section (§8.2). */
@@ -98,11 +103,18 @@ class SettingsViewModel(
      * [SmsRepository.ingest] the live receiver uses per message — no separate parsing or dedup
      * logic, so re-running this (or running it after the live receiver already caught some of the
      * same messages) is exactly as safe as re-delivering a single SMS broadcast.
+     *
+     * Syncs the rules first when the phone has none (`PARSING_ARCHITECTURE.md` §4): the app ships
+     * no rules, so an import on a fresh install would otherwise push the whole inbox into the
+     * review queue. If the sync fails the import still runs — the queue is recoverable, a refused
+     * import leaves the user with no way to backfill at all — but it says so in the summary.
      */
     fun startImport(contentResolver: ContentResolver, prefs: SharedPreferences) {
         if (_importProgress.value.isRunning) return
         viewModelScope.launch {
             _importProgress.value = ImportProgress(isRunning = true)
+            if (ruleSyncCoordinator.cachedVersion == null) ruleSyncCoordinator.sync()
+            val ranWithoutRules = ruleSyncCoordinator.cachedVersion == null
             val messages = withContext(Dispatchers.IO) { readInbox(contentResolver) }
 
             var imported = 0
@@ -124,6 +136,7 @@ class SettingsViewModel(
                     needsReview = needsReview,
                     ignored = ignored,
                     skipped = skipped,
+                    ranWithoutRules = ranWithoutRules,
                 )
             }
 

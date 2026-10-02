@@ -251,6 +251,67 @@ class MigrationTest {
     }
 
     /**
+     * v7 → v8: the app stopped pairing transfers and tracking own accounts, so `own_accounts` goes
+     * and every pairing is undone. The user's transactions are untouched — both legs of a transfer
+     * were always stored, they just stop being folded into one row.
+     */
+    @Test
+    fun migrate7To8_keepsEveryTransactionAndUnpairsTheTransfers() {
+        helper.createDatabase(dbName, 7).use { db ->
+            db.execSQL(
+                "INSERT INTO transactions (householdId, userId, amountMinor, direction, occurredAt, " +
+                    "merchant, accountLabel, categoryId, note, tags, source, isPrivate, transferGroupId) " +
+                    "VALUES (1, 1, 1000000, 'DEBIT', 1000, 'ICICI Bank', 'XX3941', NULL, '', '', 'SMS', 0, 'grp-1')",
+            )
+            db.execSQL(
+                "INSERT INTO transactions (householdId, userId, amountMinor, direction, occurredAt, " +
+                    "merchant, accountLabel, categoryId, note, tags, source, isPrivate, transferGroupId) " +
+                    "VALUES (1, 1, 1000000, 'CREDIT', 2000, 'HDFC Bank', 'XX4795', NULL, '', '', 'SMS', 0, 'grp-1')",
+            )
+            db.execSQL("INSERT INTO own_accounts (label, nickname) VALUES ('XX3941', 'HDFC Savings')")
+        }
+
+        val db = helper.runMigrationsAndValidate(dbName, 8, true, AppDatabase.MIGRATION_7_8)
+
+        db.query("SELECT COUNT(*) FROM transactions").use { cursor ->
+            cursor.moveToFirst()
+            assertEquals("both legs survive; nothing is deleted", 2, cursor.getInt(0))
+        }
+        db.query("SELECT COUNT(*) FROM transactions WHERE transferGroupId IS NOT NULL").use { cursor ->
+            cursor.moveToFirst()
+            assertEquals("no row is paired any more", 0, cursor.getInt(0))
+        }
+        db.query(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'own_accounts'",
+        ).use { cursor ->
+            cursor.moveToFirst()
+            assertEquals("the own-accounts table is gone", 0, cursor.getInt(0))
+        }
+    }
+
+    /** The path a phone on the release before this one takes. */
+    @Test
+    fun migrate6To8_runsBothStepsInOrder() {
+        helper.createDatabase(dbName, 6).use { db ->
+            db.execSQL(
+                "INSERT INTO raw_sms (sender, body, receivedAt, parseStatus) " +
+                    "VALUES ('AD-CANBNK', 'Acct XXX167 Dr. INR 26.00', 1000, 'NEEDS_REVIEW')",
+            )
+        }
+
+        val db = helper.runMigrationsAndValidate(dbName, 8, true, AppDatabase.MIGRATION_6_7, AppDatabase.MIGRATION_7_8)
+
+        db.query("SELECT COUNT(*) FROM categories").use { cursor ->
+            cursor.moveToFirst()
+            assertEquals(AppDatabase.CATEGORIES_ADDED_IN_V7.size, cursor.getInt(0))
+        }
+        db.query("SELECT COUNT(*) FROM raw_sms WHERE parseStatus = 'NEEDS_REVIEW'").use { cursor ->
+            cursor.moveToFirst()
+            assertEquals("the queued message still waits for a rule", 1, cursor.getInt(0))
+        }
+    }
+
+    /**
      * Someone who added "Travel & Holidays" by hand before upgrading must not end up with two of
      * them — two categories sharing a name behave as separate categories in budgets, merchant
      * rules and every dashboard slice.

@@ -143,12 +143,6 @@ fun DashboardScreen(
                 }
             }
 
-            // Transfers are excluded from the totals above, so state what happened to that money
-            // rather than letting it silently disappear from the picture.
-            if (state.transferMinor > 0) {
-                item { TransferChip(amountMinor = state.transferMinor) }
-            }
-
             if (state.reviewCount > 0) {
                 item { ReviewBanner(count = state.reviewCount, onClick = onNavigateToReview) }
             }

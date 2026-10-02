@@ -16,12 +16,7 @@ import com.example.expensetracker.data.sms.SmsParser
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.datetime.Clock
-import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.Instant
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.atStartOfDayIn
-import kotlinx.datetime.plus
-import kotlinx.datetime.toLocalDateTime
 
 /** Which bucket [SmsRepository.ingest] sorted a message into — what the SMS history importer counts. */
 enum class IngestResult { IMPORTED, NEEDS_REVIEW, IGNORED, DISCARDED }
@@ -34,8 +29,6 @@ class SmsRepository(
     private val learnedPatternDao: LearnedPatternDao,
     private val transactionRepository: TransactionRepository,
     private val parser: SmsParser,
-    /** Optional so tests can exercise ingestion without the transfer machinery. */
-    private val transferRepository: TransferRepository? = null,
     /** Optional so tests can exercise ingestion without merchant-rule machinery. */
     private val merchantCategoryRuleRepository: MerchantCategoryRuleRepository? = null,
     /** Overridable so a test can cross page boundaries without queueing thousands of rows. */
@@ -179,10 +172,9 @@ class SmsRepository(
      * and of a re-parse once a new rule finally reads a message that was sitting in review.
      */
     private suspend fun recordParsed(rawSms: RawSmsEntity, parsed: ParsedSms) {
-        // Two SMS can describe one movement of money — a debit alert and the transfer confirmation
-        // that follows it. Recording both would double-count the payment.
-        reconcileWithExisting(parsed, rawSms.sender, rawSms.body, rawSms.receivedAt, rawSms.id)?.let { existing ->
-            rawSmsDao.update(rawSms.copy(parseStatus = ParseStatus.PARSED, linkedTransactionId = existing))
+        // A bank redelivering a message it already sent would otherwise be a second transaction.
+        findExactBodyResend(rawSms.sender, rawSms.body, rawSms.id)?.let { existing ->
+            rawSmsDao.update(rawSms.copy(parseStatus = ParseStatus.PARSED, linkedTransactionId = existing.id))
             return
         }
 
@@ -198,18 +190,10 @@ class SmsRepository(
             occurredAt = SmsDateParser.plausibleOccurredAt(parsed.occurredAt, rawSms.receivedAt),
             categoryId = ruleCategoryId,
             accountLabel = parsed.accountLabel,
-            referenceId = parsed.referenceId,
         )
         // Close the raw <-> transaction link; without this the auto-parsed majority of rows point
         // nowhere and only manually confirmed ones are traceable.
         rawSmsDao.update(rawSms.copy(parseStatus = ParseStatus.PARSED, linkedTransactionId = transactionId))
-
-        // Money moved between the user's own accounts produces two legs; pairing them here keeps
-        // both rows while stopping either from counting as spending or income.
-        transferRepository?.tryPair(
-            transaction = transactionRepository.getById(transactionId) ?: return,
-            counterpartyAccount = parsed.counterpartyAccount,
-        )
     }
 
     /**
@@ -329,106 +313,18 @@ class SmsRepository(
     }
 
     /**
-     * Decides whether [parsed] is a second message about a payment already recorded.
-     *
-     * Banks commonly send two SMS for one transfer — an NPS contribution produces a debit alert and
-     * a NEFT confirmation, both carrying the reference `HDFCH00842011992`. Recording both would
-     * count the money twice.
-     *
-     * @return the id of the transaction this message duplicates, after making sure that transaction
-     * ends up as the debit; or null when this is a genuinely new payment.
-     */
-    private suspend fun reconcileWithExisting(
-        parsed: ParsedSms,
-        sender: String,
-        body: String,
-        receivedAt: Instant,
-        rawSmsId: Long,
-    ): Long? {
-        val existing = findByReference(parsed)
-            ?: findTransferCounterpart(parsed, body, receivedAt)
-            ?: findExactBodyResend(sender, body, rawSmsId)
-        existing ?: return null
-
-        // Two named accounts that differ mean two real legs — money left one and arrived in the
-        // other — so this is a transfer to be paired, not a duplicate to be collapsed. Merging here
-        // would delete the receiving account's history. One event reported twice by a single bank
-        // never names two different accounts.
-        if (movesBetweenTwoAccounts(existing, parsed)) return null
-
-        // The money left the account, so the debit is the truthful record. Whichever message
-        // arrived first, the surviving row is the debit one.
-        if (existing.direction == Direction.CREDIT && parsed.direction == Direction.DEBIT) {
-            transactionRepository.update(
-                existing.copy(
-                    direction = Direction.DEBIT,
-                    merchant = parsed.merchant.ifBlank { existing.merchant },
-                    accountLabel = parsed.accountLabel.ifBlank { existing.accountLabel },
-                    referenceId = parsed.referenceId ?: existing.referenceId,
-                ),
-            )
-        }
-        return existing.id
-    }
-
-    /**
-     * True when the two messages name different accounts — the signature of a transfer's two legs
-     * rather than of one bank describing a single event twice.
-     *
-     * A blank label on either side means the message didn't say, which is not evidence of a second
-     * account, so those still merge.
-     */
-    private fun movesBetweenTwoAccounts(existing: TransactionEntity, parsed: ParsedSms): Boolean {
-        val left = existing.accountLabel.trim()
-        val right = parsed.accountLabel.trim()
-        return left.isNotEmpty() && right.isNotEmpty() && !left.equals(right, ignoreCase = true)
-    }
-
-    /**
-     * A transfer's two legs legitimately share one reference, so once both exist, a resend of
-     * either leg has two rows to choose from. Prefer the one that *is* this leg — same direction,
-     * same account — over an arbitrary one; picking the other leg by accident reads as "here's the
-     * transfer's other side" and creates a phantom duplicate instead of recognising the resend.
-     */
-    private suspend fun findByReference(parsed: ParsedSms): TransactionEntity? {
-        val candidates = parsed.referenceId?.let { transactionRepository.findAllByReference(it) }.orEmpty()
-        if (candidates.size <= 1) return candidates.firstOrNull()
-        return candidates.firstOrNull { it.direction == parsed.direction && !movesBetweenTwoAccounts(it, parsed) }
-            ?: candidates.first()
-    }
-
-    /**
-     * The fallback for confirmations that omit the reference: same amount, same day, opposite
-     * direction.
-     *
-     * Deliberately narrow. A same-day refund from a shop looks identical on those three facts
-     * alone, so the message must also read like a bank transfer confirmation — otherwise a genuine
-     * refund would be swallowed into the original purchase.
-     */
-    private suspend fun findTransferCounterpart(
-        parsed: ParsedSms,
-        body: String,
-        receivedAt: Instant,
-    ): TransactionEntity? {
-        if (!TRANSFER_WORDING.containsMatchIn(body)) return null
-        val day = SmsDateParser.plausibleOccurredAt(parsed.occurredAt, receivedAt)
-            .toLocalDateTime(TimeZone.currentSystemDefault()).date
-        val zone = TimeZone.currentSystemDefault()
-        return transactionRepository.findOppositeCounterpart(
-            amountMinor = parsed.amountMinor,
-            direction = parsed.direction,
-            dayStart = day.atStartOfDayIn(zone),
-            dayEnd = day.plus(1, DateTimeUnit.DAY).atStartOfDayIn(zone),
-        )
-    }
-
-    /**
      * A byte-identical resend of a message already ingested — a bank redelivering a message that
-     * originally failed, or (in testing) a rerun seed script — has nothing distinguishing it from
-     * the original when the parser couldn't extract a reference number to match on. Matching on the
-     * literal message text, not just amount/merchant/direction, keeps this narrow: two genuinely
-     * separate same-day purchases at the same merchant for the same amount carry different message
-     * text (different running balances, order IDs, timestamps in the body) and won't collide here.
+     * originally failed, or (in testing) a rerun seed script.
+     *
+     * The unique index on `raw_sms(sender, body, receivedAt)` already rejects a redelivery carrying
+     * the *same* timestamp; this catches the one that arrives later. Matching on the literal message
+     * text keeps it narrow: two genuinely separate same-day purchases at the same merchant for the
+     * same amount carry different message text (different running balances, order IDs, timestamps in
+     * the body) and won't collide here.
+     *
+     * This is the only duplicate check left. Two *different* messages about one payment — the bank's
+     * and a UPI app's — are now two transactions, resolved from the console with a discarded sender
+     * or an ignore rule rather than by guessing on the device (`PARSING_ARCHITECTURE.md` §7).
      */
     private suspend fun findExactBodyResend(sender: String, body: String, rawSmsId: Long): TransactionEntity? {
         val prior = rawSmsDao.findLinkedBySenderAndBody(sender, body, excludingId = rawSmsId) ?: return null
@@ -469,7 +365,6 @@ class SmsRepository(
         occurredAt: Instant,
         categoryId: Long? = null,
         accountLabel: String = "",
-        referenceId: String? = null,
     ): Long = transactionRepository.create(
         TransactionEntity(
             householdId = LocalIds.DEFAULT_HOUSEHOLD_ID,
@@ -482,7 +377,6 @@ class SmsRepository(
             categoryId = categoryId,
             source = TransactionSource.SMS,
             rawSmsId = rawSmsId,
-            referenceId = referenceId,
         ),
     )
 
@@ -501,12 +395,5 @@ class SmsRepository(
          * amount-bearing promotional SMS can't grow the database without bound.
          */
         const val DISCARDED_KEEP = 200
-
-        /**
-         * Wording that marks a message as a bank-transfer confirmation rather than an ordinary
-         * credit. Without this narrowing, the amount/date fallback would merge a same-day refund
-         * into the purchase it refunded.
-         */
-        val TRANSFER_WORDING = Regex("""(?i)\b(neft|imps|rtgs|upi|money\s+transfer|transferred|transfer)\b""")
     }
 }
