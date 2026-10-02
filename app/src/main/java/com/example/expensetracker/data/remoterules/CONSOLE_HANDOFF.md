@@ -13,9 +13,9 @@ Every submission carries `appVersion` (`SubmissionRepository.kt:53`), set from
 `BuildConfig.VERSION_NAME` (`di/AppContainer.kt:57`). That was `"1.0"` from the first release and
 never bumped, so every submission sent so far looks the same age.
 
-**Now bumped** to `versionName = "1.1.0"` / `versionCode = 2`, and the comment in
-`app/build.gradle.kts` says to move both with every release and keep them in step with the git tag.
-From the next release on, `appVersion` is a real signal.
+**Now bumped with every release**, in step with the git tag — the instruction lives at the bump in
+`app/build.gradle.kts`, which is the version of record rather than this file. From the first release
+after that change, `appVersion` is a real signal.
 
 It says nothing about submissions already in the console, and nothing about phones that haven't
 updated — a sideloaded app updates when its owner gets round to it. So the retirement signal is
@@ -123,8 +123,8 @@ reach nobody's rule and sit in review.
 
 ## What the app side owes the console
 
-- [x] Bump `versionName` per release so §1 stops being true — done, `1.1.0` / `versionCode 2`, with
-      the standing instruction recorded at the bump itself.
+- [x] Bump `versionName` per release so §1 stops being true — done, with the standing instruction
+      recorded at the bump itself.
 - [ ] Decide whether a submission says which queue it came from (§6). **Agreed with the console:
       the app does not add that field without saying so first**, because `firestore.rules` has to
       deploy before any phone sends it or those submissions are rejected.
